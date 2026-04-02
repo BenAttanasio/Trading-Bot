@@ -8,6 +8,7 @@ import { alertsRouter } from './routes/alerts';
 import { configRouter } from './routes/config';
 import { watchlistRouter } from './routes/watchlist';
 import { dashboardRouter } from './routes/dashboard';
+import { activityRouter } from './routes/activity';
 import { createServiceLogger } from '../utils/logger';
 
 const log = createServiceLogger('API');
@@ -35,14 +36,32 @@ export function createServer(): express.Express {
   app.use('/api/config', configRouter);
   app.use('/api/watchlist', watchlistRouter);
   app.use('/api/dashboard', dashboardRouter);
+  app.use('/api/activity', activityRouter);
 
   return app;
 }
 
-export function startServer(): void {
+export function startServer(maxRetries = 10): void {
   const app = createServer();
+  let port = env.PORT;
+  let attempt = 0;
 
-  app.listen(env.PORT, () => {
-    log.info(`API server running on port ${env.PORT}`);
-  });
+  function tryListen(): void {
+    const server = app.listen(port, () => {
+      log.info(`API server running on port ${port}`);
+    });
+
+    server.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE' && attempt < maxRetries) {
+        attempt++;
+        port++;
+        log.info(`Port ${port - 1} in use, trying port ${port}...`);
+        tryListen();
+      } else {
+        throw err;
+      }
+    });
+  }
+
+  tryListen();
 }

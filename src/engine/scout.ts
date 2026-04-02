@@ -1,5 +1,5 @@
 import { gatherMarketData, GatheredMarketData } from '../services/alpaca/gather-data';
-import { callAIJson } from '../services/ai/client';
+import { callAIJson, BudgetExceededError } from '../services/ai/client';
 import { MORNING_RESEARCH_SYSTEM_PROMPT, buildMorningResearchPrompt } from '../services/ai/prompts/morning-research';
 import { TRADE_DECISION_SYSTEM_PROMPT, buildNewTradeDecisionPrompt } from '../services/ai/prompts/trade-decision';
 import { parseMorningResearch, parseNewTradeDecision, MorningResearchResult } from '../services/ai/parser';
@@ -51,7 +51,7 @@ export async function runMorningResearch(): Promise<void> {
   log.info('Morning research cycle complete');
 }
 
-async function researchSymbol(symbol: string, sector: string): Promise<MorningResearchResult | null> {
+async function researchSymbol(symbol: string, sector: string, budgetMode = false): Promise<MorningResearchResult | null> {
   log.info(`Researching ${symbol}...`);
 
   // Gather all available market data — never fails, just reports what's missing
@@ -69,13 +69,16 @@ async function researchSymbol(symbol: string, sector: string): Promise<MorningRe
   // Check if we already hold this stock
   const existingPosition = await getPosition(symbol);
 
-  // Use deep model for morning research when we have good data, fast model when limited
-  const useDeepModel = data.barCount >= 10;
-  if (!useDeepModel) {
+  // Budget mode (intraday scouting): always use cheap Haiku model with budget cap
+  // Morning research: deep model when data is good, fast when limited
+  const modelTier = budgetMode ? 'budget' : (data.barCount >= 10 ? 'deep' : 'fast');
+  if (budgetMode) {
+    log.info(`Using budget model for ${symbol} (intraday scouting)`);
+  } else if (modelTier === 'fast') {
     log.info(`Using fast model for ${symbol} research (limited data: ${data.barCount} bars)`);
   }
 
-  // Deep research with Claude
+  // Research with Claude
   const aiResponse = await callAIJson<Record<string, unknown>>({
     systemPrompt: MORNING_RESEARCH_SYSTEM_PROMPT,
     userPrompt: buildMorningResearchPrompt({
@@ -97,8 +100,9 @@ async function researchSymbol(symbol: string, sector: string): Promise<MorningRe
       availableData: data.available,
       missingData: data.missing,
     }),
-    model: useDeepModel ? 'deep' : 'fast',
-    maxTokens: 4096,
+    model: modelTier,
+    maxTokens: budgetMode ? 1024 : 4096,
+    budgetSensitive: budgetMode,
   });
 
   const research = parseMorningResearch(aiResponse);
@@ -116,7 +120,7 @@ async function researchSymbol(symbol: string, sector: string): Promise<MorningRe
     risks: research.risks,
     priceTarget: research.priceTarget,
     recommendation: research.recommendation,
-    modelUsed: useDeepModel ? 'claude-opus-4-6' : 'claude-sonnet-4-20250514',
+    modelUsed: modelTier === 'deep' ? 'claude-opus-4-6' : modelTier === 'fast' ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001',
     createdAt: new Date(),
   };
   await insertResearch(researchDoc);
@@ -130,7 +134,7 @@ async function researchSymbol(symbol: string, sector: string): Promise<MorningRe
   return research;
 }
 
-async function evaluateAndExecute(research: MorningResearchResult): Promise<void> {
+async function evaluateAndExecute(research: MorningResearchResult, trigger: 'morning_research' | 'sentinel' | 'manual' = 'morning_research'): Promise<void> {
   const symbol = research.symbol;
   log.info(`Evaluating trade for ${symbol} (conviction: ${research.conviction})`);
 
@@ -177,13 +181,13 @@ async function evaluateAndExecute(research: MorningResearchResult): Promise<void
     size: decision.positionSize,
   });
 
-  if (decision.action === 'BUY' && decision.conviction >= 6) {
+  if (decision.action === 'BUY' && decision.conviction >= 4) {
     const currentVolume = data.dailyBar?.v || data.bars[data.bars.length - 1]?.v || 0;
     await executeTrade({
       symbol,
       action: 'BUY',
       notional: Math.min(decision.positionSize, TRADING_RULES.maxPositionSizeDollars),
-      trigger: 'morning_research',
+      trigger,
       aiReasoning: decision.reasoning,
       aiConviction: decision.conviction,
       marketDataSnapshot: {
@@ -195,10 +199,46 @@ async function evaluateAndExecute(research: MorningResearchResult): Promise<void
   }
 }
 
-export async function researchAndTrade(symbol: string, sector: string, trigger: 'sentinel' | 'manual' = 'sentinel'): Promise<void> {
+export async function researchAndTrade(symbol: string, sector: string, trigger: 'sentinel' | 'manual' = 'sentinel', budgetMode = false): Promise<void> {
   log.info(`Sentinel-triggered research for ${symbol} — relaxed data requirements`);
-  const research = await researchSymbol(symbol, sector);
-  if (research && research.recommendation === 'BUY' && research.conviction >= 7) {
-    await evaluateAndExecute(research);
+  const research = await researchSymbol(symbol, sector, budgetMode);
+  if (research && research.recommendation === 'BUY' && research.conviction >= 6) {
+    await evaluateAndExecute(research, trigger);
   }
+}
+
+/** Lightweight scouting for the intraday pulse.
+ *  Picks up to 2 watchlist symbols not already held and evaluates them. */
+export async function runIntradayScouting(): Promise<void> {
+  log.info('Starting intraday scouting...');
+
+  const watchlist = await getActiveWatchlist();
+  if (watchlist.length === 0) {
+    log.info('Watchlist empty — no intraday scouting');
+    return;
+  }
+
+  const positions = await getAllPositions();
+  const heldSymbols = new Set(positions.map((p) => p.symbol));
+  const candidates = watchlist.filter((item) => !heldSymbols.has(item.symbol));
+
+  if (candidates.length === 0) {
+    log.info('All watchlist symbols already held — skipping scouting');
+    return;
+  }
+
+  const toResearch = candidates.slice(0, 2);
+  for (const item of toResearch) {
+    try {
+      await researchAndTrade(item.symbol, item.sector, 'sentinel', true);
+    } catch (error) {
+      if (error instanceof BudgetExceededError) {
+        log.warn('Daily token budget exceeded — stopping intraday scouting');
+        break;
+      }
+      log.error(`Intraday scouting failed for ${item.symbol}`, { error });
+    }
+  }
+
+  log.info('Intraday scouting complete');
 }

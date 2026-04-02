@@ -10,11 +10,12 @@ import { SentinelAlerts } from './components/SentinelAlerts';
 import { PerformanceChart } from './components/PerformanceChart';
 import { WatchlistManager } from './components/WatchlistManager';
 import { ConfigPanel } from './components/ConfigPanel';
+import { ActivityLog } from './components/ActivityLog';
 import type { DashboardData } from './types';
 
 function App() {
   const fetchDashboard = useCallback(() => api.getDashboard(), []);
-  const { data, error, loading } = usePolling<DashboardData>(fetchDashboard, 30000);
+  const { data, error, loading } = usePolling<DashboardData>(fetchDashboard, 30 * 60 * 1000);
 
   if (loading && !data) {
     return (
@@ -46,6 +47,7 @@ function App() {
           tradingPaused={data.status.tradingPaused}
           marketState={data.status.marketState}
           lastHeartbeat={data.status.lastHeartbeat}
+          nextPulse={data.status.nextPulse}
         />
       }
       sidebar={
@@ -76,6 +78,8 @@ function App() {
         <PerformanceChart summaries={data.dailySummaries} />
 
         <PositionsTable positions={data.positions} />
+
+        <ActivityLog />
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <TradesFeed trades={data.recentTrades} />

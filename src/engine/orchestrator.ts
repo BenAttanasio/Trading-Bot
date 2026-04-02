@@ -1,5 +1,5 @@
 import { runPortfolioReview } from './portfolio-manager';
-import { runMorningResearch, researchAndTrade } from './scout';
+import { runMorningResearch, researchAndTrade, runIntradayScouting } from './scout';
 import { isTradingPaused } from './execution';
 import { createServiceLogger } from '../utils/logger';
 
@@ -10,12 +10,20 @@ const log = createServiceLogger('Orchestrator');
  * Acts as the central dispatcher — nothing trades without going through here.
  */
 
+// Prevent overlapping cycle runs (e.g., if a pulse takes longer than its cron interval)
+let cycleRunning = false;
+
 export async function runMorningCycle(): Promise<void> {
   if (isTradingPaused()) {
     log.warn('Morning cycle skipped — trading paused');
     return;
   }
+  if (cycleRunning) {
+    log.warn('Morning cycle skipped — previous cycle still running');
+    return;
+  }
 
+  cycleRunning = true;
   log.info('═══ MORNING RESEARCH CYCLE ═══');
   try {
     // First, review existing positions
@@ -27,6 +35,8 @@ export async function runMorningCycle(): Promise<void> {
     log.info('═══ MORNING CYCLE COMPLETE ═══');
   } catch (error) {
     log.error('Morning cycle failed', { error });
+  } finally {
+    cycleRunning = false;
   }
 }
 
@@ -35,13 +45,21 @@ export async function runIntradayPulse(): Promise<void> {
     log.warn('Intraday pulse skipped — trading paused');
     return;
   }
+  if (cycleRunning) {
+    log.warn('Intraday pulse skipped — previous cycle still running');
+    return;
+  }
 
+  cycleRunning = true;
   log.info('─── INTRADAY PULSE ───');
   try {
     await runPortfolioReview();
+    await runIntradayScouting();
     log.info('─── PULSE COMPLETE ───');
   } catch (error) {
     log.error('Intraday pulse failed', { error });
+  } finally {
+    cycleRunning = false;
   }
 }
 

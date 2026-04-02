@@ -38,7 +38,7 @@ export function PerformanceChart({ summaries }: PerformanceChartProps) {
               fontSize: '12px',
               color: 'var(--text-primary)',
             }}
-            formatter={(value: number) => [`$${value.toFixed(2)}`, 'Portfolio']}
+            formatter={(value: number | undefined) => [`$${(value ?? 0).toFixed(2)}`, 'Portfolio']}
           />
           <Line type="monotone" dataKey="value" stroke="var(--accent-blue)" strokeWidth={2} dot={false} />
         </LineChart>

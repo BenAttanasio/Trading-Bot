@@ -21,8 +21,8 @@ export function startScheduler(): void {
   }, { timezone: 'America/New_York' });
   jobs.push(morningJob);
 
-  // Intraday pulse — every 30 minutes during market hours (10:00-15:30 ET)
-  const pulseJob = cron.schedule(`*/${TRADING_RULES.intradayPulseIntervalMinutes} 10-15 * * 1-5`, async () => {
+  // Intraday pulse — every N minutes during extended hours (4:00 AM - 7:55 PM ET)
+  const pulseJob = cron.schedule(`*/${TRADING_RULES.intradayPulseIntervalMinutes} 4-19 * * 1-5`, async () => {
     log.info('⏰ Triggering intraday pulse');
     await intradayPulseJob();
   }, { timezone: 'America/New_York' });
@@ -40,7 +40,7 @@ export function startScheduler(): void {
 
   log.info('Scheduler started with jobs:');
   log.info('  - Morning research: 9:35 AM ET (Mon-Fri)');
-  log.info(`  - Intraday pulse: every ${TRADING_RULES.intradayPulseIntervalMinutes}m during 10-15 ET`);
+  log.info(`  - Intraday pulse: every ${TRADING_RULES.intradayPulseIntervalMinutes}m during 4-19 ET (extended hours)`);
   log.info('  - EOD summary: 4:05 PM ET (Mon-Fri)');
   log.info(`  - Sentinel: every ${TRADING_RULES.sentinelPollIntervalSeconds}s (extended hours)`);
 }

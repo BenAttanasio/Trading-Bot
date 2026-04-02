@@ -47,35 +47,66 @@ interface OrderParams {
   type?: 'market' | 'limit' | 'stop' | 'stop_limit';
   time_in_force?: 'day' | 'gtc' | 'ioc';
   limit_price?: number;
+  extended_hours?: boolean; // enable extended hours trading (requires limit order)
 }
 
 // ─── Orders ──────────────────────────────────────────────
 
 export async function submitOrder(params: OrderParams): Promise<AlpacaOrder> {
+  let orderType = params.type || 'market';
   const body: Record<string, unknown> = {
     symbol: params.symbol,
     side: params.side,
-    type: params.type || 'market',
     time_in_force: params.time_in_force || 'day',
   };
 
-  // Use notional for dollar-based orders (fractional shares)
-  if (params.notional) {
-    body.notional = params.notional.toFixed(2);
-  } else if (params.qty) {
-    body.qty = params.qty.toString();
+  // Extended hours trading: Alpaca requires limit orders (no market/notional)
+  if (params.extended_hours && params.limit_price) {
+    orderType = 'limit';
+    body.extended_hours = true;
+
+    // Convert notional to qty since Alpaca doesn't support notional + limit
+    if (params.notional && params.limit_price > 0) {
+      const qty = Math.floor((params.notional / params.limit_price) * 1000) / 1000;
+      body.qty = qty.toString();
+    } else if (params.qty) {
+      body.qty = params.qty.toString();
+    }
+
+    // Set limit price with small buffer (0.5% for buys above, sells below)
+    const buffer = params.limit_price * 0.005;
+    const limitPrice = params.side === 'buy'
+      ? params.limit_price + buffer
+      : Math.max(0.01, params.limit_price - buffer);
+    body.limit_price = limitPrice.toFixed(2);
+
+    log.info(`Extended hours order: converting to limit @ $${limitPrice.toFixed(2)}`, {
+      originalNotional: params.notional,
+      computedQty: body.qty,
+    });
   } else {
-    throw new Error('Either notional or qty must be provided');
+    // Regular hours: use notional (dollar-based, fractional shares)
+    if (params.notional) {
+      body.notional = params.notional.toFixed(2);
+    } else if (params.qty) {
+      body.qty = params.qty.toString();
+    } else {
+      throw new Error('Either notional or qty must be provided');
+    }
+
+    if (params.limit_price) {
+      orderType = 'limit';
+      body.limit_price = params.limit_price.toFixed(2);
+    }
   }
 
-  if (params.limit_price) {
-    body.limit_price = params.limit_price.toFixed(2);
-  }
+  body.type = orderType;
 
   log.info(`Submitting ${params.side} order: ${params.symbol}`, {
     notional: params.notional,
-    qty: params.qty,
-    type: params.type || 'market',
+    qty: body.qty,
+    type: orderType,
+    extendedHours: !!params.extended_hours,
   });
 
   const order = await alpacaRequest<AlpacaOrder>('/v2/orders', {

@@ -7,7 +7,7 @@ import { Alert } from './models/alert';
 import { DailySummary } from './models/daily-summary';
 import { WatchlistItem } from './models/watchlist';
 import { Research } from './models/research';
-import { getETDateString } from '../../utils/time';
+import { getETDateISO, getStartOfETDay } from '../../utils/time';
 
 // ─── Trades ──────────────────────────────────────────────
 
@@ -32,8 +32,7 @@ export async function getRecentTrades(limit: number = 50): Promise<Trade[]> {
 }
 
 export async function getTradesToday(): Promise<Trade[]> {
-  const todayStr = getETDateString();
-  const startOfDay = new Date(todayStr);
+  const startOfDay = getStartOfETDay();
   return getDb().collection<Trade>('trades')
     .find({ createdAt: { $gte: startOfDay } })
     .toArray();
@@ -85,8 +84,7 @@ export async function getRecentDecisions(symbol: string, limit: number = 10): Pr
 }
 
 export async function getDecisionsToday(): Promise<DecisionLog[]> {
-  const todayStr = getETDateString();
-  const startOfDay = new Date(todayStr);
+  const startOfDay = getStartOfETDay();
   return getDb().collection<DecisionLog>('decision_log')
     .find({ createdAt: { $gte: startOfDay } })
     .toArray();
@@ -126,11 +124,7 @@ export async function getDailySummaries(days: number = 30): Promise<DailySummary
 }
 
 export async function getTodaySummary(): Promise<DailySummary | null> {
-  const todayStr = getETDateString();
-  // Convert MM/DD/YYYY to a comparable format
-  const [month, day, year] = todayStr.split('/');
-  const dateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-  return getDb().collection<DailySummary>('daily_summaries').findOne({ date: dateStr });
+  return getDb().collection<DailySummary>('daily_summaries').findOne({ date: getETDateISO() });
 }
 
 // ─── Watchlist ───────────────────────────────────────────

@@ -4,6 +4,7 @@ import { createTrade, Trade, TradeTrigger, OrderStatus } from '../services/db/mo
 import { evaluateRisk, RiskCheckResult } from './risk-manager';
 import { insertDecisionLog } from '../services/db/queries';
 import { DecisionLog } from '../services/db/models/decision-log';
+import { isRegularHours } from '../services/scheduler/market-hours';
 import { createServiceLogger } from '../utils/logger';
 
 const log = createServiceLogger('Execution');
@@ -90,11 +91,32 @@ export async function executeTrade(request: ExecutionRequest): Promise<Execution
 
   // Execute the trade
   try {
+    const regularHours = await isRegularHours();
+    const currentPrice = request.marketDataSnapshot?.price || 0;
+
+    // Extended hours require a limit order, which needs a price
+    if (!regularHours && currentPrice <= 0) {
+      const reason = `Cannot submit extended-hours order for ${request.symbol}: no price available for limit order`;
+      log.warn(reason);
+      return {
+        success: false,
+        riskCheck,
+        blockedReason: reason,
+      };
+    }
+
     const order = await submitOrder({
       symbol: request.symbol,
       side: request.action.toLowerCase() as 'buy' | 'sell',
       notional: request.notional,
+      // During extended hours, use limit order with current price
+      extended_hours: !regularHours && currentPrice > 0,
+      limit_price: !regularHours && currentPrice > 0 ? currentPrice : undefined,
     });
+
+    if (!regularHours) {
+      log.info(`Extended hours trade submitted for ${request.symbol}`);
+    }
 
     const trade = createTrade({
       symbol: request.symbol,

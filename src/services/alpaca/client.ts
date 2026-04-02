@@ -1,5 +1,6 @@
 import { env } from '../../config/env';
 import { createServiceLogger } from '../../utils/logger';
+import { TRADING_RULES } from '../../config/trading-rules';
 
 const log = createServiceLogger('Alpaca');
 
@@ -40,7 +41,20 @@ export async function alpacaRequest<T>(
 
   log.debug(`${method} ${url}`);
 
-  const response = await fetch(url, fetchOptions);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), TRADING_RULES.alpacaApiTimeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(url, { ...fetchOptions, signal: controller.signal });
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error(`Alpaca API timeout after ${TRADING_RULES.alpacaApiTimeoutMs}ms: ${method} ${path}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     const errorBody = await response.text();

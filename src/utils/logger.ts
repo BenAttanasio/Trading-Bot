@@ -1,5 +1,25 @@
 import winston from 'winston';
+import Transport from 'winston-transport';
 import path from 'path';
+import { activityLog } from '../services/activity-log';
+
+// Custom transport that feeds log events into the activity log (for SSE streaming)
+class ActivityLogTransport extends Transport {
+  log(info: any, callback: () => void): void {
+    setImmediate(() => {
+      const { level, message, service, timestamp, ...meta } = info;
+      // Strip ANSI color codes from level
+      const cleanLevel = level.replace(/\u001b\[\d+m/g, '');
+      activityLog.push(
+        service || 'System',
+        cleanLevel,
+        message,
+        Object.keys(meta).length > 0 ? meta : undefined
+      );
+    });
+    callback();
+  }
+}
 
 const logFormat = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
@@ -32,6 +52,7 @@ const logger = winston.createLogger({
       maxsize: 10 * 1024 * 1024, // 10MB
       maxFiles: 10,
     }),
+    new ActivityLogTransport(),
   ],
 });
 

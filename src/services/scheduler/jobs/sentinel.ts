@@ -1,6 +1,6 @@
 import { getNews } from '../../alpaca/news';
 import { getSnapshots, getBars, calculateVolumeAverage } from '../../alpaca/market-data';
-import { callAIJson } from '../../ai/client';
+import { callAIJson, BudgetExceededError } from '../../ai/client';
 import { SENTINEL_SYSTEM_PROMPT, buildSentinelEvaluatePrompt } from '../../ai/prompts/sentinel-evaluate';
 import { parseSentinelEvaluation, SentinelEvaluation } from '../../ai/parser';
 import { getActiveWatchlist, insertAlert } from '../../db/queries';
@@ -17,6 +17,9 @@ const lastPrices: Map<string, { price: number; timestamp: number }> = new Map();
 
 // Track already-seen news IDs to avoid duplicates
 const seenNewsIds = new Set<number>();
+
+// Track last escalation time per symbol to prevent dual-escalation within a tick or rapid re-fire
+const lastEscalated: Map<string, number> = new Map();
 
 let sentinelInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -103,18 +106,29 @@ async function checkNews(
         };
         await insertAlert(alert);
 
-        // Escalate if urgent
+        // Escalate if urgent — guard against dual-escalation from concurrent news+spike checks
         if (evaluation.urgency >= TRADING_RULES.urgencyEscalationThreshold) {
-          const wlItem = watchlist.find((w) => w.symbol === symbol);
-          await handleSentinelEscalation(
-            symbol,
-            wlItem?.sector || '',
-            item.headline,
-            evaluation.urgency,
-            evaluation.direction
-          );
+          const cooldownMs = TRADING_RULES.sentinelEscalationCooldownMinutes * 60 * 1000;
+          const lastTime = lastEscalated.get(symbol) ?? 0;
+          if (Date.now() - lastTime < cooldownMs) {
+            log.info(`Sentinel escalation skipped for ${symbol} — cooldown active (${TRADING_RULES.sentinelEscalationCooldownMinutes}m)`);
+          } else {
+            lastEscalated.set(symbol, Date.now());
+            const wlItem = watchlist.find((w) => w.symbol === symbol);
+            await handleSentinelEscalation(
+              symbol,
+              wlItem?.sector || '',
+              item.headline,
+              evaluation.urgency,
+              evaluation.direction
+            );
+          }
         }
       } catch (error) {
+        if (error instanceof BudgetExceededError) {
+          log.warn('Daily token budget exceeded — pausing sentinel news evaluation');
+          return;
+        }
         log.error(`Failed to evaluate news for ${symbol}`, { error, headline: item.headline });
       }
     }
@@ -154,20 +168,35 @@ async function checkPriceSpikes(
             await insertAlert(alert);
 
             if (Math.abs(priceChange) >= 5) {
-              const wlItem = watchlist.find((w) => w.symbol === symbol);
-              await handleSentinelEscalation(
-                symbol,
-                wlItem?.sector || '',
-                alert.headline,
-                alert.urgency,
-                alert.direction
-              );
+              const cooldownMs = TRADING_RULES.sentinelEscalationCooldownMinutes * 60 * 1000;
+              const lastTime = lastEscalated.get(symbol) ?? 0;
+              if (Date.now() - lastTime < cooldownMs) {
+                log.info(`Sentinel spike escalation skipped for ${symbol} — cooldown active (${TRADING_RULES.sentinelEscalationCooldownMinutes}m)`);
+              } else {
+                lastEscalated.set(symbol, Date.now());
+                const wlItem = watchlist.find((w) => w.symbol === symbol);
+                await handleSentinelEscalation(
+                  symbol,
+                  wlItem?.sector || '',
+                  alert.headline,
+                  alert.urgency,
+                  alert.direction
+                );
+              }
             }
           }
         }
       }
 
       lastPrices.set(symbol, { price: currentPrice, timestamp: Date.now() });
+    }
+
+    // Clean up stale price entries (symbols removed from watchlist or not seen in >30m)
+    const staleThresholdMs = 30 * 60 * 1000;
+    for (const [sym, entry] of lastPrices) {
+      if (Date.now() - entry.timestamp > staleThresholdMs) {
+        lastPrices.delete(sym);
+      }
     }
   } catch (error) {
     log.error('Price spike check failed', { error });
@@ -188,8 +217,9 @@ async function evaluateNewsItem(
       summary: summary || headline,
       currentPrice,
     }),
-    model: 'fast',
+    model: 'budget',
     maxTokens: 512,
+    budgetSensitive: true,
   });
 
   return parseSentinelEvaluation(aiResponse);

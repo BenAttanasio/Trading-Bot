@@ -1,15 +1,17 @@
 import { runIntradayPulse } from '../../../engine/orchestrator';
-import { isRegularHours } from '../market-hours';
+import { isExtendedHours, getMarketState } from '../market-hours';
 import { createServiceLogger } from '../../../utils/logger';
 
 const log = createServiceLogger('IntradayPulseJob');
 
 export async function intradayPulseJob(): Promise<void> {
-  const marketOpen = await isRegularHours();
-  if (!marketOpen) {
-    log.info('Market closed — skipping intraday pulse');
+  const inHours = await isExtendedHours();
+  if (!inHours) {
+    log.info('Outside extended hours — skipping intraday pulse');
     return;
   }
 
+  const state = await getMarketState();
+  log.info(`Running intraday pulse (market: ${state})`);
   await runIntradayPulse();
 }

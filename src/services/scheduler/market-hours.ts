@@ -1,5 +1,5 @@
 import { getMarketCalendar } from '../alpaca/market-data';
-import { getETHour, isWeekday } from '../../utils/time';
+import { getETHour, getETDateISO, isWeekday } from '../../utils/time';
 import { TRADING_RULES } from '../../config/trading-rules';
 import { createServiceLogger } from '../../utils/logger';
 
@@ -11,7 +11,7 @@ let todayIsMarketDay: boolean | null = null;
 let lastCalendarCheck = '';
 
 async function checkMarketDay(): Promise<boolean> {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getETDateISO();
   if (lastCalendarCheck === today && todayIsMarketDay !== null) {
     return todayIsMarketDay;
   }

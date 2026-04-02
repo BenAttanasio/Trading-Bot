@@ -1,19 +1,47 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { env } from '../../config/env';
 import { createServiceLogger } from '../../utils/logger';
+import { TRADING_RULES } from '../../config/trading-rules';
 
 const log = createServiceLogger('AI');
 
 const anthropic = new Anthropic({
   apiKey: env.ANTHROPIC_API_KEY,
+  timeout: TRADING_RULES.aiTimeoutMs,
 });
 
-export type ModelTier = 'fast' | 'deep';
+export type ModelTier = 'budget' | 'fast' | 'deep';
 
 const MODELS: Record<ModelTier, string> = {
-  fast: 'claude-sonnet-4-20250514',
-  deep: 'claude-opus-4-6',
+  budget: 'claude-haiku-4-5-20251001', // ~4× cheaper than Sonnet — use for sentinel, intraday pulse
+  fast: 'claude-sonnet-4-6',           // Updated from claude-sonnet-4-20250514
+  deep: 'claude-opus-4-6',             // Morning research, stale thesis reviews
 };
+
+// Daily token budget circuit breaker
+let dailyInputTokens = 0;
+let dailyOutputTokens = 0;
+let budgetResetDate = new Date().toDateString();
+
+function checkAndResetBudget(): void {
+  const today = new Date().toDateString();
+  if (today !== budgetResetDate) {
+    dailyInputTokens = 0;
+    dailyOutputTokens = 0;
+    budgetResetDate = today;
+    log.info('Daily AI token budget reset', { date: today });
+  }
+}
+
+export function getDailyTokenUsage(): { inputTokens: number; outputTokens: number; total: number; budget: number } {
+  checkAndResetBudget();
+  return {
+    inputTokens: dailyInputTokens,
+    outputTokens: dailyOutputTokens,
+    total: dailyInputTokens + dailyOutputTokens,
+    budget: env.DAILY_AI_TOKEN_BUDGET,
+  };
+}
 
 export interface AIRequestOptions {
   systemPrompt: string;
@@ -21,6 +49,15 @@ export interface AIRequestOptions {
   model?: ModelTier;
   maxTokens?: number;
   temperature?: number;
+  /** If true, this call is skipped when the daily token budget is exceeded */
+  budgetSensitive?: boolean;
+}
+
+export class BudgetExceededError extends Error {
+  constructor() {
+    super('Daily AI token budget exceeded — skipping non-critical call');
+    this.name = 'BudgetExceededError';
+  }
 }
 
 export async function callAI(options: AIRequestOptions): Promise<string> {
@@ -30,12 +67,33 @@ export async function callAI(options: AIRequestOptions): Promise<string> {
     model = 'fast',
     maxTokens = 2048,
     temperature = 0.3,
+    budgetSensitive = false,
   } = options;
+
+  checkAndResetBudget();
+
+  // Enforce daily budget for non-critical calls
+  if (budgetSensitive) {
+    const totalUsed = dailyInputTokens + dailyOutputTokens;
+    const budget = env.DAILY_AI_TOKEN_BUDGET;
+    if (totalUsed >= budget) {
+      log.warn('Daily AI token budget exceeded — skipping budget-sensitive call', {
+        totalUsed,
+        budget,
+        model,
+      });
+      throw new BudgetExceededError();
+    }
+    if (totalUsed >= budget * 0.9) {
+      log.warn('Daily AI token budget at 90% — approaching limit', { totalUsed, budget });
+    }
+  }
 
   const modelId = MODELS[model];
   log.info(`AI request [${model}/${modelId}]`, {
     promptLength: userPrompt.length,
     maxTokens,
+    dailyTokensUsed: dailyInputTokens + dailyOutputTokens,
   });
 
   try {
@@ -50,15 +108,21 @@ export async function callAI(options: AIRequestOptions): Promise<string> {
     const textBlock = response.content.find((b) => b.type === 'text');
     const text = textBlock ? textBlock.text : '';
 
+    dailyInputTokens += response.usage.input_tokens;
+    dailyOutputTokens += response.usage.output_tokens;
+
     log.info(`AI response received`, {
       model: modelId,
       inputTokens: response.usage.input_tokens,
       outputTokens: response.usage.output_tokens,
+      dailyTotal: dailyInputTokens + dailyOutputTokens,
       stopReason: response.stop_reason,
     });
 
     return text;
   } catch (error: any) {
+    if (error instanceof BudgetExceededError) throw error;
+
     log.error('AI request failed', {
       model: modelId,
       error: error.message,

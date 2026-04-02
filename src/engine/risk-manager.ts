@@ -50,8 +50,9 @@ export async function evaluateRisk(proposal: TradeProposal): Promise<RiskCheckRe
       reasons.push(`Position size $${proposal.notional} exceeds max $${TRADING_RULES.maxPositionSizeDollars}`);
     }
 
-    // 2. Not in cooldown (for buys only)
+    // 2 & 3. Cooldown and revenge-trading checks
     if (proposal.action === 'BUY') {
+      // 2. Not in cooldown
       const lastTradeForSymbol = recentTrades[0];
       if (lastTradeForSymbol) {
         const minutesSinceLastTrade = minutesSince(new Date(lastTradeForSymbol.createdAt));
@@ -83,8 +84,18 @@ export async function evaluateRisk(proposal: TradeProposal): Promise<RiskCheckRe
         checks.notRevengeTrading = true;
       }
     } else {
-      checks.notInCooldown = true;
-      checks.notRevengeTrading = true;
+      // SELL: block if we already sold this symbol recently (prevents duplicate sell on job overlap)
+      const lastSellForSymbol = recentTrades.find((t) => t.action === 'SELL');
+      if (lastSellForSymbol) {
+        const minutesSinceLastSell = minutesSince(new Date(lastSellForSymbol.createdAt));
+        checks.notInCooldown = minutesSinceLastSell >= TRADING_RULES.sellCooldownMinutes;
+        if (!checks.notInCooldown) {
+          reasons.push(`Sell cooldown active: already sold ${proposal.symbol} ${minutesSinceLastSell}m ago (cooldown: ${TRADING_RULES.sellCooldownMinutes}m)`);
+        }
+      } else {
+        checks.notInCooldown = true;
+      }
+      checks.notRevengeTrading = true; // revenge-trading check only applies to BUY
     }
 
     // ─── Portfolio-level checks ────────────────────────

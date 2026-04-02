@@ -16,5 +16,23 @@ module.exports = {
       merge_logs: true,
       time: true,
     },
+    {
+      name: 'ai-trader-dashboard',
+      script: 'npm',
+      args: 'run preview -- --host --port 5173',
+      cwd: `${__dirname}/dashboard`,
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '200M',
+      env: {
+        NODE_ENV: 'production',
+        API_PORT: '3001',
+      },
+      error_file: '../logs/dashboard-error.log',
+      out_file: '../logs/dashboard-out.log',
+      merge_logs: true,
+      time: true,
+    },
   ],
 };

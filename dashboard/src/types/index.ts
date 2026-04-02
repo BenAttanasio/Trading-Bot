@@ -4,6 +4,10 @@ export interface DashboardData {
     tradingPaused: boolean;
     marketState: string;
     lastHeartbeat: string;
+    nextPulse: {
+      time: string;
+      label: string;
+    };
   };
   portfolio: {
     value: number;
@@ -79,4 +83,13 @@ export interface WatchlistItem {
 export interface ConfigData {
   rules: Record<string, number>;
   tradingPaused: boolean;
+}
+
+export interface ActivityEvent {
+  id: number;
+  timestamp: string;
+  service: string;
+  level: string;
+  message: string;
+  meta?: Record<string, unknown>;
 }

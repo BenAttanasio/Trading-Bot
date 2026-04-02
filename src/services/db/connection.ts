@@ -49,6 +49,8 @@ async function createIndexes(db: Db): Promise<void> {
     { key: { symbol: 1, createdAt: -1 } },
     { key: { createdAt: -1 } },
     { key: { trigger: 1 } },
+    // Compound index for risk-manager queries (by symbol + date range + action)
+    { key: { symbol: 1, action: 1, createdAt: -1 }, name: 'symbol_action_date' },
   ]);
 
   // Positions
@@ -81,6 +83,24 @@ async function createIndexes(db: Db): Promise<void> {
     { key: { symbol: 1 }, unique: true },
     { key: { active: 1 } },
   ]);
+
+  // TTL indexes — auto-delete old documents to keep storage bounded
+  // decision_log: keep 90 days (high-volume collection)
+  await db.collection('decision_log').createIndex(
+    { createdAt: 1 },
+    { expireAfterSeconds: 90 * 24 * 60 * 60, name: 'ttl_90d' }
+  );
+  // alerts: keep 30 days
+  await db.collection('alerts').createIndex(
+    { createdAt: 1 },
+    { expireAfterSeconds: 30 * 24 * 60 * 60, name: 'ttl_30d' }
+  );
+  // research: keep 90 days
+  await db.collection('research').createIndex(
+    { createdAt: 1 },
+    { expireAfterSeconds: 90 * 24 * 60 * 60, name: 'ttl_90d' }
+  );
+  // trades and daily_summaries are kept forever (financial records)
 
   log.info('Database indexes created');
 }

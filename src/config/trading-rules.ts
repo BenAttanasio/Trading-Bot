@@ -38,6 +38,15 @@ export const TRADING_RULES = {
   maxOscillationCount: 3,       // max buy→sell→buy cycles on same stock in 7 days
   oscillationWindowDays: 7,
 
+  // Cooldowns (sell-side & review)
+  sellCooldownMinutes: env.SELL_COOLDOWN_MINUTES,             // prevents duplicate sells of same symbol
+  positionReviewCooldownMinutes: env.POSITION_REVIEW_COOLDOWN_MINUTES, // min time between AI reviews of same position
+  sentinelEscalationCooldownMinutes: env.SENTINEL_ESCALATION_COOLDOWN_MINUTES, // min time between escalations of same symbol
+
+  // API timeouts
+  alpacaApiTimeoutMs: env.ALPACA_API_TIMEOUT_MS,
+  aiTimeoutMs: env.AI_TIMEOUT_MS,
+
   // Market hours (Eastern Time)
   extendedHoursStart: 4,  // 4:00 AM ET
   extendedHoursEnd: 20,   // 8:00 PM ET

@@ -4,12 +4,12 @@ import { getNewsForSymbol } from '../services/alpaca/news';
 import { callAIJson } from '../services/ai/client';
 import { TRADE_DECISION_SYSTEM_PROMPT, buildPositionReviewPrompt } from '../services/ai/prompts/trade-decision';
 import { parsePositionReview, PositionReviewResult } from '../services/ai/parser';
-import { getAllPositions, upsertPosition, removePosition, getPosition } from '../services/db/queries';
+import { getAllPositions, upsertPosition, removePosition, getPosition, getRecentDecisions, insertDecisionLog } from '../services/db/queries';
 import { Position, calculateThesisFreshness } from '../services/db/models/position';
 import { executeTrade } from './execution';
 import { TRADING_RULES } from '../config/trading-rules';
 import { createServiceLogger } from '../utils/logger';
-import { daysSince } from '../utils/time';
+import { daysSince, minutesSince } from '../utils/time';
 
 const log = createServiceLogger('PortfolioManager');
 
@@ -98,6 +98,27 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
     ? calculateThesisFreshness(new Date(storedPosition.thesisLastUpdated))
     : 'stale';
 
+  // Cooldown gate: skip AI re-evaluation if we reviewed this position recently
+  const recentDecisions = await getRecentDecisions(symbol, 1);
+  const lastDecision = recentDecisions[0];
+  if (lastDecision) {
+    const minutesAgo = minutesSince(new Date(lastDecision.createdAt));
+    if (minutesAgo < TRADING_RULES.positionReviewCooldownMinutes) {
+      log.info(`Skipping AI review for ${symbol} — last decision (${lastDecision.decision}) was ${minutesAgo}m ago (cooldown: ${TRADING_RULES.positionReviewCooldownMinutes}m)`);
+      // Still update stored position prices without an AI call
+      if (storedPosition) {
+        await upsertPosition({
+          ...storedPosition,
+          currentPrice,
+          unrealizedPL: parseFloat(alpacaPos.unrealized_pl),
+          unrealizedPLPercent: plPercent,
+          quantity: parseFloat(alpacaPos.qty),
+        });
+      }
+      return;
+    }
+  }
+
   // Ask AI for decision
   const aiResponse = await callAIJson<Record<string, unknown>>({
     systemPrompt: TRADE_DECISION_SYSTEM_PROMPT,
@@ -119,6 +140,18 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
   const decision = parsePositionReview(aiResponse);
   log.info(`AI decision for ${symbol}: ${decision.action} (conviction: ${decision.conviction})`, {
     reasoning: decision.reasoning,
+  });
+
+  // Log all decisions (including HOLD) so cooldown gate and audit trail work correctly
+  await insertDecisionLog({
+    symbol,
+    workflow: 'portfolio_manager',
+    decision: decision.action as any,
+    executed: false, // will be updated to true by executeTrade for EXIT/TRIM/ADD
+    blockedReason: null,
+    aiResponse: { reasoning: decision.reasoning, conviction: decision.conviction },
+    marketDataSnapshot: { price: currentPrice, volume: currentVolume, changePercent: plPercent },
+    createdAt: new Date(),
   });
 
   // Execute action
@@ -150,7 +183,7 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
       break;
 
     case 'ADD':
-      const addAmount = Math.min(25, TRADING_RULES.maxPositionSizeDollars - marketValue);
+      const addAmount = Math.min(TRADING_RULES.maxPositionSizeDollars * 0.5, TRADING_RULES.maxPositionSizeDollars - marketValue);
       if (addAmount > 5) {
         await executeTrade({
           symbol,
