@@ -1,5 +1,5 @@
 import { getPositions, AlpacaPosition } from '../services/alpaca/trading';
-import { getSnapshot, getBars, calculateRSI, calculateVolumeAverage } from '../services/alpaca/market-data';
+import { getSnapshot, getBars, calculateRSI, calculateVolumeAverage, Bar } from '../services/alpaca/market-data';
 import { getNewsForSymbol } from '../services/alpaca/news';
 import { callAIJson } from '../services/ai/client';
 import { TRADE_DECISION_SYSTEM_PROMPT, buildPositionReviewPrompt } from '../services/ai/prompts/trade-decision';
@@ -51,7 +51,7 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
 
   // Fetch market data
   const [bars, news] = await Promise.all([
-    getBars(symbol, '1Day', 20).catch(() => ({ bars: [] })),
+    getBars(symbol, '1Day', 20).then((r) => ({ bars: r.bars ?? [] })).catch(() => ({ bars: [] as Bar[] })),
     getNewsForSymbol(symbol, 5).catch(() => []),
   ]);
 
@@ -157,29 +157,36 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
   // Execute action
   switch (decision.action) {
     case 'EXIT':
-      await executeTrade({
-        symbol,
-        action: 'SELL',
-        notional: marketValue,
-        trigger: 'portfolio_manager',
-        aiReasoning: decision.reasoning,
-        aiConviction: decision.conviction,
-        marketDataSnapshot: { price: currentPrice, volume: currentVolume, changePercent: plPercent },
-      });
-      await removePosition(symbol);
+      if (marketValue < 1) {
+        log.warn(`${symbol} position too small to sell ($${marketValue.toFixed(4)}) — dropping from tracking`);
+        await removePosition(symbol);
+      } else {
+        const exitResult = await executeTrade({
+          symbol,
+          action: 'SELL',
+          notional: marketValue,
+          trigger: 'portfolio_manager',
+          aiReasoning: decision.reasoning,
+          aiConviction: decision.conviction,
+          marketDataSnapshot: { price: currentPrice, volume: currentVolume, changePercent: plPercent },
+        });
+        if (exitResult.success) await removePosition(symbol);
+      }
       break;
 
     case 'TRIM':
       const trimAmount = marketValue * 0.5; // sell half
-      await executeTrade({
-        symbol,
-        action: 'SELL',
-        notional: trimAmount,
-        trigger: 'portfolio_manager',
-        aiReasoning: `TRIM: ${decision.reasoning}`,
-        aiConviction: decision.conviction,
-        marketDataSnapshot: { price: currentPrice, volume: currentVolume, changePercent: plPercent },
-      });
+      if (trimAmount >= 1) {
+        await executeTrade({
+          symbol,
+          action: 'SELL',
+          notional: trimAmount,
+          trigger: 'portfolio_manager',
+          aiReasoning: `TRIM: ${decision.reasoning}`,
+          aiConviction: decision.conviction,
+          marketDataSnapshot: { price: currentPrice, volume: currentVolume, changePercent: plPercent },
+        });
+      }
       break;
 
     case 'ADD':

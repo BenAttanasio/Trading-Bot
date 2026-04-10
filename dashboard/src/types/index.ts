@@ -66,10 +66,16 @@ export interface AlertData {
 export interface DailySummaryData {
   date: string;
   portfolioValue: number;
+  investedValue: number;
   dailyPL: number;
   dailyPLPercent: number;
   tradesExecuted: number;
   aiSummary: string;
+}
+
+export interface LiveDataPoint {
+  time: string;
+  value: number;
 }
 
 export interface WatchlistItem {

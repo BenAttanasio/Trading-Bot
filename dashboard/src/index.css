@@ -16,6 +16,10 @@
   --accent-purple: #9b59b6;
 }
 
+html {
+  font-size: 15px;
+}
+
 body {
   margin: 0;
   background-color: var(--bg-primary);

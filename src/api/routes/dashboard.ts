@@ -55,7 +55,7 @@ dashboardRouter.get('/', async (req, res) => {
       getAllPositions(),
       getRecentTrades(20),
       getRecentAlerts(20),
-      getDailySummaries(30),
+      getDailySummaries(90),
       getDecisionsToday(),
       getMarketState(),
     ]);
@@ -83,20 +83,20 @@ dashboardRouter.get('/', async (req, res) => {
 
     // Inject live "today" data point so chart isn't stuck on yesterday
     const todayISO = getETDateISO();
-    const historicalSummaries = dailySummaries.slice(0, 7);
-    const todayExists = historicalSummaries.some((s) => s.date === todayISO);
+    const todayExists = dailySummaries.some((s) => s.date === todayISO);
     const summariesWithToday = todayExists
-      ? historicalSummaries
+      ? dailySummaries
       : [
           {
             date: todayISO,
             portfolioValue,
+            investedValue: parseFloat(account.long_market_value),
             dailyPL,
             dailyPLPercent,
             tradesExecuted: decisionsToday.filter((d) => d.executed).length,
             aiSummary: 'Live — end-of-day summary pending',
           },
-          ...historicalSummaries,
+          ...dailySummaries,
         ];
 
     res.json({
@@ -136,7 +136,15 @@ dashboardRouter.get('/', async (req, res) => {
         actionTaken: a.actionTaken,
         createdAt: a.createdAt,
       })),
-      dailySummaries: summariesWithToday,
+      dailySummaries: summariesWithToday.map((s) => ({
+        date: s.date,
+        portfolioValue: s.portfolioValue,
+        investedValue: (s as any).investedValue ?? 0,
+        dailyPL: s.dailyPL,
+        dailyPLPercent: s.dailyPLPercent,
+        tradesExecuted: s.tradesExecuted,
+        aiSummary: s.aiSummary,
+      })),
       todayStats: {
         tradesExecuted: decisionsToday.filter((d) => d.executed).length,
         tradesBlocked: decisionsToday.filter((d) => d.decision === 'BLOCKED').length,

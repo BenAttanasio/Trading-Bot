@@ -44,8 +44,8 @@ export async function evaluateRisk(proposal: TradeProposal): Promise<RiskCheckRe
 
     // ─── Position-level checks ─────────────────────────
 
-    // 1. Position size within limit
-    checks.positionSizeWithinLimit = proposal.notional <= TRADING_RULES.maxPositionSizeDollars;
+    // 1. Position size within limit (only enforced on BUY — never block a SELL)
+    checks.positionSizeWithinLimit = proposal.action === 'SELL' || proposal.notional <= TRADING_RULES.maxPositionSizeDollars;
     if (!checks.positionSizeWithinLimit) {
       reasons.push(`Position size $${proposal.notional} exceeds max $${TRADING_RULES.maxPositionSizeDollars}`);
     }

@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { api } from './api/client';
 import { usePolling } from './hooks/usePolling';
 import { Layout } from './components/Layout';
@@ -50,14 +50,8 @@ function App() {
           nextPulse={data.status.nextPulse}
         />
       }
-      sidebar={
-        <>
-          <ConfigPanel />
-          <WatchlistManager />
-        </>
-      }
     >
-      <div className="space-y-4 max-w-6xl">
+      <div className="space-y-4 max-w-7xl mx-auto">
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-bold">AI Trader Dashboard</h1>
           {error && (
@@ -75,18 +69,46 @@ function App() {
           todayStats={data.todayStats}
         />
 
-        <PerformanceChart summaries={data.dailySummaries} />
-
-        <PositionsTable positions={data.positions} />
-
-        <ActivityLog />
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div className="md:col-span-3">
+            <PerformanceChart summaries={data.dailySummaries} portfolioValue={data.portfolio.value} />
+          </div>
+          <div className="md:col-span-2">
+            <ActivityLog />
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <TradesFeed trades={data.recentTrades} />
           <SentinelAlerts alerts={data.recentAlerts} />
         </div>
+
+        <PositionsTable positions={data.positions} />
+
+        <CollapsibleControls />
       </div>
     </Layout>
+  );
+}
+
+function CollapsibleControls() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="bg-[var(--bg-card)] rounded-lg border border-[var(--border)]">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full px-4 py-3 flex items-center justify-between text-sm font-semibold text-[var(--text-secondary)] uppercase tracking-wide hover:bg-[var(--bg-hover)] rounded-lg transition-colors"
+      >
+        <span>Controls & Watchlist</span>
+        <span className="text-[var(--text-muted)] text-xs">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 border-t border-[var(--border)]">
+          <ConfigPanel />
+          <WatchlistManager />
+        </div>
+      )}
+    </div>
   );
 }
 

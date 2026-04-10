@@ -37,7 +37,12 @@ function serviceBadge(service: string): string {
 
 function formatTime(timestamp: string): string {
   const d = new Date(timestamp);
-  return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const timeStr = d.toLocaleTimeString('en-US', { hour12: true, hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  if (isToday) return timeStr;
+  const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return `${dateStr} · ${timeStr}`;
 }
 
 export function ActivityLog() {
@@ -97,7 +102,7 @@ export function ActivityLog() {
   }
 
   return (
-    <div className="bg-[var(--bg-card)] rounded-lg border border-[var(--border)]">
+    <div className="bg-[var(--bg-card)] rounded-lg border border-[var(--border)] flex flex-col">
       <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <button
@@ -133,7 +138,7 @@ export function ActivityLog() {
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="max-h-72 overflow-y-auto font-mono text-xs"
+          className="overflow-y-auto font-mono text-xs min-h-[300px] max-h-[340px]"
         >
           {events.length === 0 ? (
             <div className="p-4 text-center text-[var(--text-muted)]">
@@ -145,7 +150,7 @@ export function ActivityLog() {
                 key={event.id}
                 className={`flex items-start gap-2 px-3 py-1 border-b border-[var(--border)]/50 hover:bg-[var(--bg-hover)] ${levelBg(event.level)}`}
               >
-                <span className="text-[var(--text-muted)] shrink-0 w-16">
+                <span className="text-[var(--text-muted)] shrink-0 w-28">
                   {formatTime(event.timestamp)}
                 </span>
                 <span className={`${levelColor(event.level)} shrink-0 w-11 uppercase font-bold`}>

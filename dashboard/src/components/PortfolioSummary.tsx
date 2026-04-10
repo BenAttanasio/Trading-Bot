@@ -51,7 +51,7 @@ export function PortfolioSummary({ value, cash, invested, dailyPL, dailyPLPercen
       {/* Activity */}
       <div className="bg-[var(--bg-card)] rounded-lg p-4 border border-[var(--border)]">
         <div className="text-xs text-[var(--text-muted)] uppercase tracking-wide mb-1">Today's Activity</div>
-        <div className="flex gap-3 mt-1">
+        <div className="flex flex-wrap gap-3 mt-1">
           <div>
             <span className="text-lg font-bold text-[var(--accent-blue)]">{todayStats.tradesExecuted}</span>
             <span className="text-xs text-[var(--text-muted)] ml-1">trades</span>

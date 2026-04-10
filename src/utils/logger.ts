@@ -26,7 +26,9 @@ const logFormat = winston.format.combine(
   winston.format.errors({ stack: true }),
   winston.format.printf(({ timestamp, level, message, service, ...meta }) => {
     const svc = service ? `[${service}]` : '';
-    const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
+    const serializeError = (_k: string, v: unknown) =>
+      v instanceof Error ? { message: v.message, name: v.name, stack: v.stack?.split('\n').slice(0, 2).join(' → ') } : v;
+    const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta, serializeError)}` : '';
     return `${timestamp} ${level.toUpperCase().padEnd(5)} ${svc} ${message}${metaStr}`;
   })
 );

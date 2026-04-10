@@ -50,7 +50,7 @@ export async function gatherMarketData(symbol: string, newsLimit: number = 10): 
     }),
   ]);
 
-  const bars = barsResult.bars;
+  const bars = barsResult.bars ?? [];
   const snapshot = snapshotResult;
   const available: string[] = [];
   const missing: string[] = [];

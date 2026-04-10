@@ -55,7 +55,7 @@ function formatAge(seconds: number): string {
 
 export function StatusIndicator({ botRunning, tradingPaused, marketState, lastHeartbeat, nextPulse }: StatusIndicatorProps) {
   const heartbeatAge = useHeartbeatAge(lastHeartbeat);
-  const isStale = heartbeatAge > 120;
+  const isStale = heartbeatAge > 35 * 60; // stale after 35 min (poll interval is 30 min)
   const countdown = useCountdown(nextPulse.time);
 
   return (
@@ -86,7 +86,7 @@ export function StatusIndicator({ botRunning, tradingPaused, marketState, lastHe
       </span>
 
       <span className="text-xs text-[var(--text-muted)] ml-auto">
-        Last heartbeat: {formatAge(heartbeatAge)}
+        Last data: {formatAge(heartbeatAge)} · {new Date(lastHeartbeat).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}
       </span>
     </div>
   );
