@@ -6,6 +6,7 @@ interface StatusIndicatorProps {
   marketState: string;
   lastHeartbeat: string;
   nextPulse: { time: string; label: string };
+  onTogglePause: () => void;
 }
 
 function useCountdown(targetISO: string): string | null {
@@ -53,7 +54,7 @@ function formatAge(seconds: number): string {
   return rm > 0 ? `${h}h ${rm}m ago` : `${h}h ago`;
 }
 
-export function StatusIndicator({ botRunning, tradingPaused, marketState, lastHeartbeat, nextPulse }: StatusIndicatorProps) {
+export function StatusIndicator({ botRunning, tradingPaused, marketState, lastHeartbeat, nextPulse, onTogglePause }: StatusIndicatorProps) {
   const heartbeatAge = useHeartbeatAge(lastHeartbeat);
   const isStale = heartbeatAge > 35 * 60; // stale after 35 min (poll interval is 30 min)
   const countdown = useCountdown(nextPulse.time);
@@ -67,11 +68,16 @@ export function StatusIndicator({ botRunning, tradingPaused, marketState, lastHe
         </span>
       </div>
 
-      {tradingPaused && (
-        <span className="px-2 py-0.5 text-xs font-bold bg-[var(--accent-yellow)]/20 text-[var(--accent-yellow)] rounded">
-          PAUSED
-        </span>
-      )}
+      <button
+        onClick={onTogglePause}
+        className={`px-2 py-0.5 text-xs font-bold rounded border transition-colors ${
+          tradingPaused
+            ? 'bg-[var(--accent-yellow)]/20 text-[var(--accent-yellow)] border-[var(--accent-yellow)]/40 hover:bg-[var(--accent-yellow)]/30'
+            : 'bg-transparent text-[var(--text-muted)] border-[var(--border)] hover:text-[var(--accent-red)] hover:border-[var(--accent-red)]/40'
+        }`}
+      >
+        {tradingPaused ? '⏸ PAUSED — Resume' : 'Pause Trading'}
+      </button>
 
       <span className={`px-2 py-0.5 text-xs rounded ${
         marketState === 'open' ? 'bg-[var(--accent-green)]/20 text-[var(--accent-green)]' :

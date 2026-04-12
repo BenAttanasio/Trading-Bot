@@ -15,7 +15,17 @@ import type { DashboardData } from './types';
 
 function App() {
   const fetchDashboard = useCallback(() => api.getDashboard(), []);
-  const { data, error, loading } = usePolling<DashboardData>(fetchDashboard, 30 * 60 * 1000);
+  const { data, error, loading, refresh } = usePolling<DashboardData>(fetchDashboard, 30 * 60 * 1000);
+
+  const handleTogglePause = useCallback(async () => {
+    if (!data) return;
+    if (data.status.tradingPaused) {
+      await api.resumeTrading();
+    } else {
+      await api.pauseTrading();
+    }
+    refresh();
+  }, [data, refresh]);
 
   if (loading && !data) {
     return (
@@ -48,6 +58,7 @@ function App() {
           marketState={data.status.marketState}
           lastHeartbeat={data.status.lastHeartbeat}
           nextPulse={data.status.nextPulse}
+          onTogglePause={handleTogglePause}
         />
       }
     >
