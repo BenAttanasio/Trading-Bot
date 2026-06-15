@@ -2,6 +2,7 @@
   "name": "ai-trader",
   "version": "1.0.0",
   "description": "Autonomous AI-powered stock trading system",
+  "license": "MIT",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

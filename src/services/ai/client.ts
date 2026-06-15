@@ -21,6 +21,7 @@ const MODELS: Record<ModelTier, string> = {
 // Daily token budget circuit breaker
 let dailyInputTokens = 0;
 let dailyOutputTokens = 0;
+let dailyTokensByModel: Record<ModelTier, number> = { budget: 0, fast: 0, deep: 0 };
 let budgetResetDate = new Date().toDateString();
 
 function checkAndResetBudget(): void {
@@ -28,6 +29,7 @@ function checkAndResetBudget(): void {
   if (today !== budgetResetDate) {
     dailyInputTokens = 0;
     dailyOutputTokens = 0;
+    dailyTokensByModel = { budget: 0, fast: 0, deep: 0 };
     budgetResetDate = today;
     log.info('Daily AI token budget reset', { date: today });
   }
@@ -40,6 +42,19 @@ export function getDailyTokenUsage(): { inputTokens: number; outputTokens: numbe
     outputTokens: dailyOutputTokens,
     total: dailyInputTokens + dailyOutputTokens,
     budget: env.DAILY_AI_TOKEN_BUDGET,
+  };
+}
+
+export function getDetailedTokenUsage(): {
+  total: number;
+  budget: number;
+  byModel: Record<ModelTier, number>;
+} {
+  checkAndResetBudget();
+  return {
+    total: dailyInputTokens + dailyOutputTokens,
+    budget: env.DAILY_AI_TOKEN_BUDGET,
+    byModel: { ...dailyTokensByModel },
   };
 }
 
@@ -110,6 +125,7 @@ export async function callAI(options: AIRequestOptions): Promise<string> {
 
     dailyInputTokens += response.usage.input_tokens;
     dailyOutputTokens += response.usage.output_tokens;
+    dailyTokensByModel[model] += response.usage.input_tokens + response.usage.output_tokens;
 
     log.info(`AI response received`, {
       model: modelId,

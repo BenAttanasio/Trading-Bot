@@ -16,7 +16,28 @@ function timeAgo(dateStr: string): string {
 }
 
 function formatCurrency(n: number) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
+}
+
+function convictionBar(conviction: number) {
+  const bars = 10;
+  return (
+    <div className="flex items-center gap-1">
+      {Array.from({ length: bars }).map((_, i) => (
+        <div
+          key={i}
+          className={`h-1.5 w-2 rounded-sm ${
+            i < conviction
+              ? conviction >= 8 ? 'bg-[var(--accent-green)]'
+              : conviction >= 6 ? 'bg-[var(--accent-blue)]'
+              : 'bg-[var(--accent-yellow)]'
+              : 'bg-[var(--bg-hover)]'
+          }`}
+        />
+      ))}
+      <span className="text-[10px] text-[var(--text-muted)] ml-1">{conviction}/10</span>
+    </div>
+  );
 }
 
 export function TradesFeed({ trades }: TradesFeedProps) {
@@ -27,38 +48,45 @@ export function TradesFeed({ trades }: TradesFeedProps) {
       <div className="px-4 py-3 border-b border-[var(--border)]">
         <h3 className="font-semibold text-sm uppercase tracking-wide text-[var(--text-secondary)]">Recent Trades</h3>
       </div>
-      <div className="max-h-80 overflow-y-auto">
+      <div className="max-h-72 overflow-y-auto">
         {trades.length === 0 ? (
-          <div className="p-4 text-center text-[var(--text-muted)]">No trades yet</div>
+          <div className="p-6 text-center text-[var(--text-muted)] text-sm">No trades yet</div>
         ) : (
           trades.map((trade, i) => {
             const isBuy = trade.action === 'BUY';
+            const isOpen = expandedId === i;
             return (
               <div key={i}>
                 <div
-                  className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border)] hover:bg-[var(--bg-hover)] cursor-pointer"
-                  onClick={() => setExpandedId(expandedId === i ? null : i)}
+                  className="flex items-center gap-3 px-4 py-2.5 border-b border-[var(--border)] hover:bg-[var(--bg-hover)] cursor-pointer"
+                  onClick={() => setExpandedId(isOpen ? null : i)}
                 >
-                  <div className="flex items-center gap-3">
-                    <span className={`px-1.5 py-0.5 text-xs font-bold rounded ${isBuy ? 'bg-[var(--accent-green)]/20 text-[var(--accent-green)]' : 'bg-[var(--accent-red)]/20 text-[var(--accent-red)]'}`}>
-                      {trade.action}
-                    </span>
-                    <span className="font-bold text-sm">{trade.symbol}</span>
-                    <span className="text-sm text-[var(--text-secondary)]">{formatCurrency(trade.notional)}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
+                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                    isBuy
+                      ? 'bg-[var(--accent-green)]/20 text-[var(--accent-green)]'
+                      : 'bg-[var(--accent-red)]/20 text-[var(--accent-red)]'
+                  }`}>
+                    {trade.action}
+                  </span>
+                  <span className="font-bold text-sm">{trade.symbol}</span>
+                  <span className="text-sm text-[var(--text-secondary)] tabular-nums">{formatCurrency(trade.notional)}</span>
+                  <div className="ml-auto flex items-center gap-2">
                     <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--bg-secondary)] text-[var(--text-muted)]">
-                      {trade.trigger}
+                      {trade.trigger.replace('_', ' ')}
                     </span>
-                    <span className="text-xs text-[var(--text-muted)]">{timeAgo(trade.createdAt)}</span>
+                    <span className="text-xs text-[var(--text-muted)] w-14 text-right shrink-0">{timeAgo(trade.createdAt)}</span>
+                    <span className="text-[var(--text-muted)] text-xs">{isOpen ? '▲' : '▼'}</span>
                   </div>
                 </div>
-                {expandedId === i && (
-                  <div className="px-4 py-2.5 bg-[var(--bg-hover)] text-xs border-b border-[var(--border)]">
-                    <div className="text-[var(--text-secondary)]">
-                      <span className="text-[var(--accent-blue)]">AI (conviction {trade.aiConviction}/10):</span> {trade.aiReasoning}
+
+                {isOpen && (
+                  <div className="px-4 py-3 bg-[var(--bg-hover)] border-b border-[var(--border)] space-y-2">
+                    {convictionBar(trade.aiConviction)}
+                    <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{trade.aiReasoning}</p>
+                    <div className="text-xs text-[var(--text-muted)]">
+                      Status: <span className={`font-medium ${trade.orderStatus === 'filled' ? 'text-[var(--accent-green)]' : 'text-[var(--text-secondary)]'}`}>{trade.orderStatus}</span>
+                      {' · '}@${trade.price.toFixed(2)}
                     </div>
-                    <div className="text-[var(--text-muted)] mt-1">Status: {trade.orderStatus}</div>
                   </div>
                 )}
               </div>

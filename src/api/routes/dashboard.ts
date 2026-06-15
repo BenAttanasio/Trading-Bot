@@ -6,8 +6,39 @@ import { isTradingPaused } from '../../engine/execution';
 import { getMarketState } from '../../services/scheduler/market-hours';
 import { getETDateISO, getETHour } from '../../utils/time';
 import { TRADING_RULES } from '../../config/trading-rules';
+import { getDetailedTokenUsage } from '../../services/ai/client';
+import { DecisionLog } from '../../services/db/models/decision-log';
 
 export const dashboardRouter = Router();
+
+type BotMoodColorKey = 'gray' | 'red' | 'orange' | 'blue' | 'green';
+interface BotMood { label: string; description: string; colorKey: BotMoodColorKey }
+
+function computeBotMood(decisions: DecisionLog[], positionCount: number): BotMood {
+  if (positionCount === 0) {
+    return { label: 'FLAT', description: 'Fully in cash — waiting for opportunities', colorKey: 'gray' };
+  }
+
+  const executed = decisions.filter((d) => d.executed);
+  const exits = executed.filter((d) => d.decision === 'EXIT' || d.decision === 'TRIM').length;
+  const buys = executed.filter((d) => d.decision === 'BUY' || d.decision === 'ADD').length;
+
+  // Check if trailing stops fired (EXIT with specific reasoning pattern)
+  const trailingStopFired = decisions.some(
+    (d) => d.executed && d.decision === 'EXIT' && typeof d.aiResponse?.reasoning === 'string' && d.aiResponse.reasoning.toLowerCase().includes('trailing stop')
+  );
+
+  if (trailingStopFired) {
+    return { label: 'RISK OFF', description: 'Closing positions to protect capital', colorKey: 'red' };
+  }
+  if (exits > buys && exits > 0) {
+    return { label: 'DEFENSIVE', description: 'Reducing exposure, caution mode', colorKey: 'orange' };
+  }
+  if (buys > exits && buys > 0) {
+    return { label: 'BULLISH', description: 'Actively building positions', colorKey: 'green' };
+  }
+  return { label: 'NEUTRAL', description: 'Holding current positions', colorKey: 'blue' };
+}
 
 function computeNextPulse(marketState: string): { time: string; label: string } {
   const now = new Date();
@@ -49,9 +80,11 @@ function computeNextPulse(marketState: string): { time: string; label: string } 
 // GET /api/dashboard — aggregated dashboard data (single endpoint for efficiency)
 dashboardRouter.get('/', async (req, res) => {
   try {
+    const demoMode = process.env.DEMO_MODE === '1';
+
     const [account, alpacaPositions, dbPositions, recentTrades, recentAlerts, dailySummaries, decisionsToday, marketState] = await Promise.all([
       getAccount(),
-      getPositions(),
+      demoMode ? Promise.resolve([]) : getPositions(),
       getAllPositions(),
       getRecentTrades(20),
       getRecentAlerts(20),
@@ -60,29 +93,64 @@ dashboardRouter.get('/', async (req, res) => {
       getMarketState(),
     ]);
 
-    const portfolioValue = parseFloat(account.portfolio_value);
-    const lastEquity = parseFloat(account.last_equity);
-    const dailyPL = portfolioValue - lastEquity;
-    const dailyPLPercent = lastEquity > 0 ? (dailyPL / lastEquity) * 100 : 0;
+    // In demo mode, derive portfolio values from DB daily summary + DB positions
+    const todayISO = getETDateISO();
+    const todaySummary = dailySummaries.find((s) => s.date === todayISO);
 
-    const positions = alpacaPositions.map((ap) => {
-      const db = dbPositions.find((d) => d.symbol === ap.symbol);
-      return {
-        symbol: ap.symbol,
-        qty: parseFloat(ap.qty),
-        entryPrice: parseFloat(ap.avg_entry_price),
-        currentPrice: parseFloat(ap.current_price),
-        marketValue: parseFloat(ap.market_value),
-        unrealizedPL: parseFloat(ap.unrealized_pl),
-        unrealizedPLPercent: parseFloat(ap.unrealized_plpc) * 100,
-        thesis: db?.thesis || null,
-        thesisFreshness: db?.thesisFreshness || null,
-        daysHeld: db?.daysHeld || 0,
-      };
-    });
+    let portfolioValue: number;
+    let cashBalance: number;
+    let investedValue: number;
+    let dailyPL: number;
+    let dailyPLPercent: number;
+
+    if (demoMode && todaySummary) {
+      portfolioValue = todaySummary.portfolioValue;
+      cashBalance = (todaySummary as any).cashBalance ?? portfolioValue * 0.82;
+      investedValue = (todaySummary as any).investedValue ?? portfolioValue * 0.18;
+      dailyPL = todaySummary.dailyPL;
+      dailyPLPercent = todaySummary.dailyPLPercent;
+    } else {
+      portfolioValue = parseFloat(account.portfolio_value);
+      const lastEquity = parseFloat(account.last_equity);
+      cashBalance = parseFloat(account.cash);
+      investedValue = parseFloat(account.long_market_value);
+      dailyPL = portfolioValue - lastEquity;
+      dailyPLPercent = lastEquity > 0 ? (dailyPL / lastEquity) * 100 : 0;
+    }
+
+    let positions;
+    if (demoMode) {
+      positions = dbPositions.map((db) => ({
+        symbol: db.symbol,
+        qty: db.quantity,
+        entryPrice: db.entryPrice,
+        currentPrice: db.currentPrice,
+        marketValue: db.currentPrice * db.quantity,
+        unrealizedPL: db.unrealizedPL,
+        unrealizedPLPercent: db.unrealizedPLPercent,
+        thesis: db.thesis || null,
+        thesisFreshness: db.thesisFreshness || null,
+        daysHeld: db.daysHeld || 0,
+      }));
+    } else {
+      positions = alpacaPositions.map((ap) => {
+        const db = dbPositions.find((d) => d.symbol === ap.symbol);
+        return {
+          symbol: ap.symbol,
+          qty: parseFloat(ap.qty),
+          entryPrice: parseFloat(ap.avg_entry_price),
+          currentPrice: parseFloat(ap.current_price),
+          marketValue: parseFloat(ap.market_value),
+          unrealizedPL: parseFloat(ap.unrealized_pl),
+          unrealizedPLPercent: parseFloat(ap.unrealized_plpc) * 100,
+          thesis: db?.thesis || null,
+          thesisFreshness: db?.thesisFreshness || null,
+          daysHeld: db?.daysHeld || 0,
+        };
+      });
+    }
 
     // Inject live "today" data point so chart isn't stuck on yesterday
-    const todayISO = getETDateISO();
     const todayExists = dailySummaries.some((s) => s.date === todayISO);
     const summariesWithToday = todayExists
       ? dailySummaries
@@ -90,7 +158,7 @@ dashboardRouter.get('/', async (req, res) => {
           {
             date: todayISO,
             portfolioValue,
-            investedValue: parseFloat(account.long_market_value),
+            investedValue,
             dailyPL,
             dailyPLPercent,
             tradesExecuted: decisionsToday.filter((d) => d.executed).length,
@@ -103,17 +171,19 @@ dashboardRouter.get('/', async (req, res) => {
       status: {
         botRunning: true,
         tradingPaused: isTradingPaused(),
-        marketState,
+        marketState: demoMode ? 'open' : marketState,
         lastHeartbeat: new Date().toISOString(),
-        nextPulse: computeNextPulse(marketState),
+        nextPulse: demoMode ? { time: new Date(Date.now() + 18 * 60 * 1000).toISOString(), label: 'Next pulse in 18m' } : computeNextPulse(marketState),
+        botMood: computeBotMood(decisionsToday, positions.length),
+        tokenUsage: getDetailedTokenUsage(),
       },
       portfolio: {
         value: portfolioValue,
-        cash: parseFloat(account.cash),
-        invested: parseFloat(account.long_market_value),
+        cash: cashBalance,
+        invested: investedValue,
         dailyPL,
         dailyPLPercent,
-        positionCount: alpacaPositions.length,
+        positionCount: positions.length,
       },
       positions,
       recentTrades: recentTrades.map((t) => ({

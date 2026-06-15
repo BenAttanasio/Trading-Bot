@@ -8,6 +8,16 @@ export interface DashboardData {
       time: string;
       label: string;
     };
+    botMood: {
+      label: string;
+      description: string;
+      colorKey: 'gray' | 'red' | 'orange' | 'blue' | 'green';
+    };
+    tokenUsage: {
+      total: number;
+      budget: number;
+      byModel: { budget: number; fast: number; deep: number };
+    };
   };
   portfolio: {
     value: number;
@@ -98,4 +108,50 @@ export interface ActivityEvent {
   level: string;
   message: string;
   meta?: Record<string, unknown>;
+}
+
+export interface TradeOutcome {
+  symbol: string;
+  entryTrigger: string;
+  entryPrice: number;
+  exitPrice: number;
+  entryDate: string;
+  exitDate: string;
+  daysHeld: number;
+  realizedPLPercent: number;
+  realizedPLDollars: number;
+  aiConviction: number;
+  originalThesis: string;
+  exitReason: string;
+  exitWorkflow: string;
+  thesisFreshness: string;
+  createdAt: string;
+}
+
+export interface TriggerStats {
+  count: number;
+  winRate: number;
+  avgPL: number;
+}
+
+export interface ConvictionStats {
+  range: string;
+  count: number;
+  winRate: number;
+}
+
+export interface OutcomesData {
+  outcomes: TradeOutcome[];
+  stats: {
+    totalTrades: number;
+    winRate: number;
+    avgPLPercent: number;
+    avgDaysHeld: number;
+    byTrigger: Record<string, TriggerStats>;
+    byConviction: {
+      high: ConvictionStats;
+      mid: ConvictionStats;
+      low: ConvictionStats;
+    };
+  };
 }

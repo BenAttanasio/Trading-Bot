@@ -7,6 +7,7 @@ import { Alert } from './models/alert';
 import { DailySummary } from './models/daily-summary';
 import { WatchlistItem } from './models/watchlist';
 import { Research } from './models/research';
+import { TradeOutcome } from './models/trade-outcome';
 import { getETDateISO, getStartOfETDay } from '../../utils/time';
 
 // ─── Trades ──────────────────────────────────────────────
@@ -170,5 +171,20 @@ export async function getResearchForSymbol(symbol: string): Promise<Research[]> 
     .find({ symbol })
     .sort({ createdAt: -1 })
     .limit(10)
+    .toArray();
+}
+
+// ─── Trade Outcomes ───────────────────────────────────
+
+export async function insertTradeOutcome(outcome: TradeOutcome): Promise<ObjectId> {
+  const result = await getDb().collection<TradeOutcome>('trade_outcomes').insertOne(outcome);
+  return result.insertedId;
+}
+
+export async function getRecentOutcomes(limit: number = 50): Promise<TradeOutcome[]> {
+  return getDb().collection<TradeOutcome>('trade_outcomes')
+    .find()
+    .sort({ createdAt: -1 })
+    .limit(limit)
     .toArray();
 }

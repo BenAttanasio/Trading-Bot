@@ -9,6 +9,7 @@ import { configRouter } from './routes/config';
 import { watchlistRouter } from './routes/watchlist';
 import { dashboardRouter } from './routes/dashboard';
 import { activityRouter } from './routes/activity';
+import { outcomesRouter } from './routes/outcomes';
 import { createServiceLogger } from '../utils/logger';
 
 const log = createServiceLogger('API');
@@ -37,6 +38,7 @@ export function createServer(): express.Express {
   app.use('/api/watchlist', watchlistRouter);
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/activity', activityRouter);
+  app.use('/api/outcomes', outcomesRouter);
 
   return app;
 }

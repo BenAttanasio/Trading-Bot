@@ -2,6 +2,8 @@
 
 Autonomous AI-powered stock trading bot with a real-time dashboard. Researches your watchlist using Claude (Opus/Sonnet/Haiku), manages an Alpaca paper or live portfolio, and streams live decisions to a React dashboard.
 
+> **Disclaimer:** This software can place real trades with real money. It is provided as-is for educational purposes and is **not financial advice**. You supply your own API keys via a local `.env` file (never committed). Use paper trading first, and run live at your own risk.
+
 ## How It Works
 
 The bot runs several overlapping workflows:
@@ -255,3 +257,9 @@ ssh pi@raspberrypi.local "sudo reboot"
 | `npm run dev` | `dashboard/` | Start dashboard Vite dev server |
 | `npm run build` | `dashboard/` | Production build of dashboard → `dashboard/dist/` |
 | `npm run preview` | `dashboard/` | Serve production build locally |
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE).

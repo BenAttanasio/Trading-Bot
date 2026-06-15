@@ -23,6 +23,8 @@ export const api = {
   getConfig: () => fetchApi<any>('/config'),
   getWatchlist: () => fetchApi<any>('/watchlist'),
 
+  getOutcomes: () => fetchApi<any>('/outcomes'),
+
   pauseTrading: () => fetchApi<any>('/config/pause', { method: 'POST' }),
   resumeTrading: () => fetchApi<any>('/config/resume', { method: 'POST' }),
 

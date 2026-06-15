@@ -4,7 +4,7 @@ import { getNewsForSymbol } from '../services/alpaca/news';
 import { callAIJson } from '../services/ai/client';
 import { TRADE_DECISION_SYSTEM_PROMPT, buildPositionReviewPrompt } from '../services/ai/prompts/trade-decision';
 import { parsePositionReview, PositionReviewResult } from '../services/ai/parser';
-import { getAllPositions, upsertPosition, removePosition, getPosition, getRecentDecisions, insertDecisionLog } from '../services/db/queries';
+import { getAllPositions, upsertPosition, removePosition, getPosition, getRecentDecisions, insertDecisionLog, insertTradeOutcome } from '../services/db/queries';
 import { Position, calculateThesisFreshness } from '../services/db/models/position';
 import { executeTrade } from './execution';
 import { TRADING_RULES } from '../config/trading-rules';
@@ -65,7 +65,7 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
     const floorPercent = parseFloat(storedPosition.trailingStop.floor);
     if (plPercent <= floorPercent) {
       log.warn(`Trailing stop triggered for ${symbol}: P&L ${plPercent.toFixed(2)}% below floor ${floorPercent}%`);
-      await executeTrade({
+      const trailingResult = await executeTrade({
         symbol,
         action: 'SELL',
         notional: marketValue,
@@ -74,6 +74,27 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
         aiConviction: 9,
         marketDataSnapshot: { price: currentPrice, volume: currentVolume, changePercent: plPercent },
       });
+      if (trailingResult.success && storedPosition) {
+        const exitDate = new Date();
+        const plPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+        await insertTradeOutcome({
+          symbol,
+          entryTrigger: storedPosition.entryTrigger,
+          entryPrice,
+          exitPrice: currentPrice,
+          entryDate: new Date(storedPosition.createdAt),
+          exitDate,
+          daysHeld: daysSince(new Date(storedPosition.createdAt)),
+          realizedPLPercent: plPct,
+          realizedPLDollars: marketValue * (plPct / 100),
+          aiConviction: 0,
+          originalThesis: storedPosition.thesis,
+          exitReason: 'trailing_stop',
+          exitWorkflow: 'portfolio_manager',
+          thesisFreshness: storedPosition.thesisFreshness,
+          createdAt: exitDate,
+        }).catch((err) => log.error(`Failed to insert trade outcome for ${symbol}`, { err }));
+      }
       await removePosition(symbol);
       return;
     }
@@ -170,14 +191,37 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
           aiConviction: decision.conviction,
           marketDataSnapshot: { price: currentPrice, volume: currentVolume, changePercent: plPercent },
         });
-        if (exitResult.success) await removePosition(symbol);
+        if (exitResult.success) {
+          if (storedPosition) {
+            const exitDate = new Date();
+            const plPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+            await insertTradeOutcome({
+              symbol,
+              entryTrigger: storedPosition.entryTrigger,
+              entryPrice,
+              exitPrice: currentPrice,
+              entryDate: new Date(storedPosition.createdAt),
+              exitDate,
+              daysHeld: daysSince(new Date(storedPosition.createdAt)),
+              realizedPLPercent: plPct,
+              realizedPLDollars: marketValue * (plPct / 100),
+              aiConviction: decision.conviction,
+              originalThesis: storedPosition.thesis,
+              exitReason: 'ai_exit',
+              exitWorkflow: 'portfolio_manager',
+              thesisFreshness: storedPosition.thesisFreshness,
+              createdAt: exitDate,
+            }).catch((err) => log.error(`Failed to insert trade outcome for ${symbol}`, { err }));
+          }
+          await removePosition(symbol);
+        }
       }
       break;
 
-    case 'TRIM':
+    case 'TRIM': {
       const trimAmount = marketValue * 0.5; // sell half
       if (trimAmount >= 1) {
-        await executeTrade({
+        const trimResult = await executeTrade({
           symbol,
           action: 'SELL',
           notional: trimAmount,
@@ -186,8 +230,30 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
           aiConviction: decision.conviction,
           marketDataSnapshot: { price: currentPrice, volume: currentVolume, changePercent: plPercent },
         });
+        if (trimResult.success && storedPosition) {
+          const exitDate = new Date();
+          const plPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+          await insertTradeOutcome({
+            symbol,
+            entryTrigger: storedPosition.entryTrigger,
+            entryPrice,
+            exitPrice: currentPrice,
+            entryDate: new Date(storedPosition.createdAt),
+            exitDate,
+            daysHeld: daysSince(new Date(storedPosition.createdAt)),
+            realizedPLPercent: plPct,
+            realizedPLDollars: trimAmount * (plPct / 100),
+            aiConviction: decision.conviction,
+            originalThesis: storedPosition.thesis,
+            exitReason: 'ai_trim',
+            exitWorkflow: 'portfolio_manager',
+            thesisFreshness: storedPosition.thesisFreshness,
+            createdAt: exitDate,
+          }).catch((err) => log.error(`Failed to insert trim outcome for ${symbol}`, { err }));
+        }
       }
       break;
+    }
 
     case 'ADD':
       const addAmount = Math.min(TRADING_RULES.maxPositionSizeDollars * 0.5, TRADING_RULES.maxPositionSizeDollars - marketValue);

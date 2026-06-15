@@ -1,7 +1,29 @@
 node_modules/
 dist/
-.env
-*.log
-.DS_Store
 dashboard/node_modules/
 dashboard/dist/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+.env.production
+
+# Logs
+*.log
+logs/
+
+# Local databases / dumps
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Claude local settings
+.claude/settings.local.json
