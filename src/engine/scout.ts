@@ -3,6 +3,7 @@ import { getBarsMulti, Bar } from '../services/alpaca/market-data';
 import { getMarketContext, formatMarketContext, relativeStrength5d, MarketContext, INDEX_ETFS, SECTOR_ETFS } from '../services/alpaca/market-context';
 import { buildUniverse, UniverseEntry } from '../services/alpaca/screener';
 import { getAsset } from '../services/alpaca/trading';
+import { getFilingsMany, getRecentFilings, formatFilings, edgarEnabled } from '../services/edgar/filings';
 import { callAIStructured, BudgetExceededError, MODEL_IDS, ModelTier } from '../services/ai/client';
 import { getMorningResearchSystemPrompt, buildMorningResearchPrompt } from '../services/ai/prompts/morning-research';
 import { getTradeDecisionSystemPrompt, buildNewTradeDecisionPrompt } from '../services/ai/prompts/trade-decision';
@@ -85,6 +86,7 @@ export async function runMorningResearch(): Promise<void> {
     watchlist,
     maxCandidates: env.UNIVERSE_MAX_CANDIDATES,
     minPrice: env.UNIVERSE_MIN_PRICE,
+    minDollarVolume: env.UNIVERSE_MIN_DOLLAR_VOLUME,
     includeScreener: env.UNIVERSE_SCREENER,
     exclude: [...INDEX_ETFS, ...Object.values(SECTOR_ETFS)],
   });
@@ -110,7 +112,7 @@ export async function runMorningResearch(): Promise<void> {
     log.warn('Ranking produced nothing — no entries today');
     return;
   }
-  const { ranking, data, ctx } = ranked;
+  const { ranking, data, ctx, filings } = ranked;
   const sectorOf = new Map(universe.map((u) => [u.symbol, u.sector]));
 
   const longs = ranking.candidates
@@ -143,6 +145,7 @@ export async function runMorningResearch(): Promise<void> {
         proposedStop: c.invalidationPrice,
         proposedTarget: c.targetPrice,
         horizonDays: c.horizonDays,
+        filings: filings.get(c.symbol),
       });
     } catch (error) {
       if (error instanceof BudgetExceededError) {
@@ -176,6 +179,8 @@ export interface RankOutput {
   ranking: RankingResult;
   data: Map<string, GatheredMarketData>;
   ctx: MarketContext;
+  /** Formatted SEC filing lines per symbol (empty map when EDGAR is disabled). */
+  filings: Map<string, string[]>;
   candidatesSent: number;
 }
 
@@ -202,6 +207,14 @@ export async function rankUniverse(inputs: RankInputs): Promise<RankOutput | nul
   }
 
   const ctx = inputs.marketContext ?? (await getMarketContext(inputs.asOf));
+
+  const filings = new Map<string, string[]>();
+  if (edgarEnabled()) {
+    const raw = await getFilingsMany([...data.keys()], 10, inputs.asOf);
+    for (const [sym, list] of raw) filings.set(sym, formatFilings(list));
+    log.info(`EDGAR: filings for ${filings.size}/${data.size} candidates`);
+  }
+
   const candidates: RankingCandidateInput[] = inputs.universe
     .filter((u) => data.has(u.symbol))
     .map((u) => {
@@ -221,6 +234,7 @@ export async function rankUniverse(inputs: RankInputs): Promise<RankOutput | nul
         atrPct: d.atrPct,
         volumeVsAvg: d.volumeVsAvg,
         news: d.news.map((n) => ({ headline: n.headline, date: n.created_at.split('T')[0] })),
+        filings: filings.get(u.symbol),
         held: inputs.held?.get(u.symbol) ?? null,
       };
     });
@@ -282,7 +296,7 @@ export async function rankUniverse(inputs: RankInputs): Promise<RankOutput | nul
     }
   }
 
-  return { ranking, data, ctx, candidatesSent: candidates.length };
+  return { ranking, data, ctx, filings, candidatesSent: candidates.length };
 }
 
 export function researchFromCandidate(c: RankingCandidate): MorningResearchResult {
@@ -420,6 +434,7 @@ interface EvaluateOptions {
   proposedStop?: number | null;
   proposedTarget?: number | null;
   horizonDays?: number | null;
+  filings?: string[];
 }
 
 async function evaluateAndExecute(research: MorningResearchResult, trigger: Trigger, opts: EvaluateOptions): Promise<void> {
@@ -466,6 +481,7 @@ async function evaluateAndExecute(research: MorningResearchResult, trigger: Trig
       change1dPct: data.priceChange1d,
       portfolioContext,
       marketContext: formatMarketContext(ctx),
+      filings: opts.filings ?? (edgarEnabled() ? formatFilings(await getRecentFilings(symbol, 10)) : undefined),
       availableData: data.available,
       missingData: data.missing,
     }),

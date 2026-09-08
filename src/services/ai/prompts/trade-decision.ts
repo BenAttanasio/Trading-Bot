@@ -71,10 +71,14 @@ export function buildNewTradeDecisionPrompt(params: {
   change1dPct: number | null;
   portfolioContext: string;
   marketContext?: string;
+  filings?: string[];
   availableData?: string[];
   missingData?: string[];
 }): string {
   const fmtOpt = (v: number | null, fmt: (n: number) => string) => (v !== null ? fmt(v) : 'N/A');
+  const filingsBlock = params.filings && params.filings.length
+    ? `\nRECENT SEC FILINGS:\n${params.filings.slice(0, 6).map((f) => `  - ${f}`).join('\n')}\n`
+    : '';
 
   const dataAvailBlock = (params.availableData || params.missingData) ? `
 DATA AVAILABILITY:
@@ -93,7 +97,7 @@ ${params.catalysts.map((c) => `  - ${c}`).join('\n') || '  (none listed)'}
 
 RISKS:
 ${params.risks.map((r) => `  - ${r}`).join('\n') || '  (none listed)'}
-
+${filingsBlock}
 MARKET DATA:
 - Current Price: $${params.currentPrice.toFixed(2)} (today ${fmtOpt(params.change1dPct, (v) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`)})
 - RSI(14): ${fmtOpt(params.rsi, (v) => v.toFixed(1))}

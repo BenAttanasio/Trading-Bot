@@ -10,7 +10,7 @@ It ships with a dashboard and a compact `/api/summary` other dashboards can read
 
 | Workflow | When (ET) | What it does |
 |---|---|---|
-| **Morning ranking** | 9:35 Mon–Fri | Builds the universe (watchlist + Alpaca movers/most-actives screener), gathers bars/news/ATR for every name plus SPY/QQQ/sector-ETF context, and asks Sonnet 5 for **one cross-sectional ranking**. The top longs (and shorts, if enabled) get a per-name decision, a volatility-scaled size, and code-enforced stop/target/time-stop |
+| **Morning ranking** | 9:35 Mon–Fri | Builds the universe (watchlist + Alpaca movers/most-actives screener, liquidity-filtered), gathers bars/news/ATR and recent **SEC filings** (8-K item codes, 10-Q/K, 13D, offerings) for every name plus SPY/QQQ/sector-ETF context, and asks Sonnet 5 for **one cross-sectional ranking**. The top longs (and shorts, if enabled) get a per-name decision, a volatility-scaled size, and code-enforced stop/target/time-stop |
 | **Stop guard** | every 60 s during extended hours | No model in the loop: closes any position that crosses its stop or target, breaks its trailing floor, or outlives its horizon |
 | **Intraday pulse** | every 30 min, 4:00–19:59 | Reviews held positions (reviews may only *tighten* stops); scouts only names the sentinel queued since the last pulse, with Haiku 4.5 |
 | **Sentinel** | every 60 s during extended hours | Triages news and price spikes; urgency ≥ 7 escalates to immediate research, 4–6 is queued for the pulse |

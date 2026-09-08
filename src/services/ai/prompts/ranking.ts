@@ -13,6 +13,7 @@ ${DATA_GAPS_NOTE}
 
 How to rank:
 - Edge comes from (a) a concrete, dated catalyst the market has not fully priced, confirmed by price/volume; or (b) unusual relative strength/weakness vs SPY and the sector with a plausible driver. A name that is up because its sector is up has no edge of its own.
+- SEC filings are primary sources and often under-read: an 8-K with earnings results (2.02), an acquisition (2.01), a material agreement (1.01), a restatement (4.02), officer departures (5.02), or a delisting notice (3.01) outranks a headline about the same thing. A shelf/offering (424B, S-3) is dilution — usually bearish near-term.
 - Score every symbol on -10..+10. Most names should sit near 0 with side "none". Reserve |score| >= 6 for setups you would defend to a skeptic.
 - Give an invalidation price (the stop) and a target for every non-zero side. The stop must be on the losing side of the current price and within 15% of it; the target on the winning side. Prefer stops at a real level (recent low/high, ATR multiple) over round numbers.
 - Extended moves: a name already up > 8% today or RSI > 75 needs an exceptional catalyst to be long; the same in reverse for shorts. Do not chase.
@@ -37,6 +38,8 @@ export interface RankingCandidateInput {
   atrPct: number | null;
   volumeVsAvg: number | null;
   news: Array<{ headline: string; date: string }>;
+  /** Recent SEC filings, already formatted one per line (may be empty). */
+  filings?: string[];
   held: 'long' | 'short' | null;
 }
 
@@ -53,9 +56,10 @@ export function buildRankingPrompt(params: {
 }): string {
   const rows = params.candidates.map((c) => {
     const news = c.news.slice(0, 5).map((n) => `      - [${n.date}] ${n.headline}`).join('\n');
+    const filings = (c.filings ?? []).slice(0, 4).map((f) => `      - SEC ${f}`).join('\n');
     const trend = c.sma20 == null ? 'SMA20 n/a' : c.price > c.sma20 ? 'above SMA20' : 'below SMA20';
     return `  ${c.symbol}${c.sector ? ` (${c.sector})` : ''} — $${c.price.toFixed(2)} | 1d ${fmt(c.change1dPct)} 5d ${fmt(c.change5dPct)} 1m ${fmt(c.change1mPct)} | RS vs SPY 5d ${fmt(c.relStrength5dPct)} | RSI ${c.rsi == null ? 'n/a' : c.rsi.toFixed(0)} | ${trend} | ATR ${c.atrPct == null ? 'n/a' : c.atrPct.toFixed(1) + '%'} | vol ${c.volumeVsAvg == null ? 'n/a' : c.volumeVsAvg.toFixed(1) + 'x'} | source: ${c.note}${c.held ? ` | HELD ${c.held.toUpperCase()}` : ''}
-${news || '      (no recent news)'}`;
+${[news, filings].filter(Boolean).join('\n') || '      (no recent news or filings)'}`;
   });
 
   return `MORNING RANKING — ${params.dateISO}

@@ -84,6 +84,17 @@ export const env = {
   UNIVERSE_MAX_CANDIDATES: parseInt(optionalEnv('UNIVERSE_MAX_CANDIDATES', '30'), 10),
   /** Screener candidates below this price are dropped (penny names, warrants). */
   UNIVERSE_MIN_PRICE: parseFloat(optionalEnv('UNIVERSE_MIN_PRICE', '5')),
+  /** Screener candidates whose price × today's volume is below this are dropped (illiquid microcaps). */
+  UNIVERSE_MIN_DOLLAR_VOLUME: parseFloat(optionalEnv('UNIVERSE_MIN_DOLLAR_VOLUME', '25000000')),
+  /**
+   * SEC EDGAR asks for a descriptive User-Agent (ideally "Name contact@email"). The
+   * default is a generic descriptive string; set EDGAR_USER_AGENT=off to disable the
+   * 8-K / 10-Q filings feed in the ranking.
+   */
+  EDGAR_USER_AGENT: (() => {
+    const v = optionalEnv('EDGAR_USER_AGENT', 'ai-trader/1.0 (autonomous paper-trading research bot)');
+    return v.trim().toLowerCase() === 'off' ? '' : v;
+  })(),
   /** Minimum scored predictions before the weekly review may tune params or file change requests. */
   MIN_SCORED_FOR_TUNING: parseInt(optionalEnv('MIN_SCORED_FOR_TUNING', '30'), 10),
   /** 1 = code-enforced stop / target / time-stop guard runs every sentinel tick. */

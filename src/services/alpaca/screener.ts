@@ -1,4 +1,5 @@
 import { alpacaRequest } from './client';
+import { getSnapshots } from './market-data';
 import { createServiceLogger } from '../../utils/logger';
 
 const log = createServiceLogger('Screener');
@@ -113,18 +114,73 @@ export function mergeUniverse(input: UniverseInputs): UniverseEntry[] {
   return out.slice(0, Math.max(input.maxCandidates, input.watchlist.length));
 }
 
+/**
+ * Pure: drop screener names that are too cheap or too thin to trade. Watchlist
+ * names are never filtered. `stats` is price × today's volume per symbol.
+ */
+export function filterByLiquidity(
+  universe: UniverseEntry[],
+  stats: Record<string, { price: number; dollarVolume: number }>,
+  minPrice: number,
+  minDollarVolume: number
+): { kept: UniverseEntry[]; dropped: string[] } {
+  const kept: UniverseEntry[] = [];
+  const dropped: string[] = [];
+  for (const u of universe) {
+    if (u.source === 'watchlist') {
+      kept.push(u);
+      continue;
+    }
+    const s = stats[u.symbol];
+    if (!s || s.price < minPrice || s.dollarVolume < minDollarVolume) {
+      dropped.push(`${u.symbol}(${s ? `$${s.price.toFixed(2)}, $${(s.dollarVolume / 1e6).toFixed(1)}M` : 'no data'})`);
+      continue;
+    }
+    kept.push(u);
+  }
+  return { kept, dropped };
+}
+
 export async function buildUniverse(opts: {
   watchlist: Array<{ symbol: string; sector: string }>;
   maxCandidates: number;
   minPrice: number;
+  minDollarVolume?: number;
   includeScreener: boolean;
   exclude?: string[];
 }): Promise<UniverseEntry[]> {
   if (!opts.includeScreener) {
     return mergeUniverse({ ...opts, gainers: [], losers: [], actives: [] });
   }
-  const [movers, actives] = await Promise.all([getTopMovers(20), getMostActives(20, 'volume')]);
-  const universe = mergeUniverse({ ...opts, gainers: movers.gainers, losers: movers.losers, actives });
+  // Over-fetch so the liquidity filter still leaves enough to fill the cap
+  const [movers, actives] = await Promise.all([getTopMovers(40), getMostActives(40, 'volume')]);
+  let universe = mergeUniverse({
+    ...opts,
+    gainers: movers.gainers,
+    losers: movers.losers,
+    actives,
+    maxCandidates: opts.maxCandidates + 20,
+  });
+
+  const screenerSymbols = universe.filter((u) => u.source !== 'watchlist').map((u) => u.symbol);
+  if (screenerSymbols.length > 0) {
+    try {
+      const snaps = await getSnapshots(screenerSymbols);
+      const stats: Record<string, { price: number; dollarVolume: number }> = {};
+      for (const [sym, s] of Object.entries(snaps)) {
+        const price = s.latestTrade?.p ?? s.dailyBar?.c ?? 0;
+        const vol = s.dailyBar?.v ?? s.prevDailyBar?.v ?? 0;
+        stats[sym] = { price, dollarVolume: price * vol };
+      }
+      const { kept, dropped } = filterByLiquidity(universe, stats, opts.minPrice, opts.minDollarVolume ?? 0);
+      if (dropped.length) log.info(`Screener liquidity filter dropped ${dropped.length}: ${dropped.join(', ')}`);
+      universe = kept;
+    } catch (error) {
+      log.warn('Liquidity filter skipped (snapshots unavailable)', { error });
+    }
+  }
+  universe = universe.slice(0, Math.max(opts.maxCandidates, opts.watchlist.length));
+
   log.info(`Universe: ${universe.length} candidates (${universe.filter((u) => u.source === 'watchlist').length} watchlist, ${universe.filter((u) => u.source !== 'watchlist').length} screener)`, {
     screener: universe.filter((u) => u.source !== 'watchlist').map((u) => `${u.symbol}:${u.source}`),
   });
