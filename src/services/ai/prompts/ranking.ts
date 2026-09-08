@@ -17,7 +17,9 @@ How to rank:
 - Give an invalidation price (the stop) and a target for every non-zero side. The stop must be on the losing side of the current price and within 15% of it; the target on the winning side. Prefer stops at a real level (recent low/high, ATR multiple) over round numbers.
 - Extended moves: a name already up > 8% today or RSI > 75 needs an exceptional catalyst to be long; the same in reverse for shorts. Do not chase.
 - Horizon is trading days. Predictions are scored at the horizon, so pick the horizon the catalyst actually needs.
-- If shorts are not allowed, still score bearish names negatively but set side "none"; the score is informative.`;
+- If shorts are not allowed, still score bearish names negatively but set side "none"; the score is informative.
+
+Output discipline (the slate is large and the response has a hard token cap): summary <= 25 words; at most 3 catalysts and 3 risks per name, each <= 12 words; for side "none" give one-sentence summary, empty catalysts/risks, null prices. Do not restate the input data.`;
 }
 
 export interface RankingCandidateInput {
@@ -65,5 +67,5 @@ ${rows.join('\n')}
 
 We will take at most ${params.maxLongs} longs${params.shortsEnabled ? ` and ${params.maxShorts} shorts` : ''} from the top of your ranking, then run a final per-name check before entry. Names already HELD are for context (do not re-recommend the same side; you may flag the opposite side if the thesis broke).
 
-Return one entry per candidate symbol with side, score, conviction, confidence, horizon, expected move, thesis, catalysts, risks, invalidation price and target.`;
+Return one entry per candidate symbol with side, score, conviction, confidence, horizon, expected move, thesis, catalysts, risks, invalidation price and target. Keep every field terse.`;
 }

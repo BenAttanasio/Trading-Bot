@@ -89,14 +89,23 @@ export async function runMorningResearch(): Promise<void> {
     exclude: [...INDEX_ETFS, ...Object.values(SECTOR_ETFS)],
   });
 
-  const ranked = await rankUniverse({
-    universe,
+  const rankOpts = {
     held,
     initialDeploymentNote: initialNote,
     maxLongs: env.MORNING_MAX_BUYS,
     maxShorts: env.ENABLE_SHORTS ? env.MORNING_MAX_SHORTS : 0,
     persist: true,
-  });
+  };
+  let ranked: RankOutput | null = null;
+  try {
+    ranked = await rankUniverse({ universe, ...rankOpts });
+  } catch (error: any) {
+    if (!/max_tokens/.test(String(error?.message))) throw error;
+    // Output overflowed: rank the watchlist-first half of the slate instead of giving up the day.
+    const smaller = universe.slice(0, Math.max(5, Math.ceil(universe.length / 2)));
+    log.warn(`Ranking overflowed the output cap with ${universe.length} names — retrying with ${smaller.length}`);
+    ranked = await rankUniverse({ universe: smaller, ...rankOpts });
+  }
   if (!ranked) {
     log.warn('Ranking produced nothing — no entries today');
     return;
@@ -231,8 +240,10 @@ export async function rankUniverse(inputs: RankInputs): Promise<RankOutput | nul
       initialDeploymentNote: inputs.initialDeploymentNote,
     }),
     model: tier,
-    effort: tier === 'budget' ? 'medium' : 'high',
-    maxTokens: 16000,
+    // Thinking tokens count against max_tokens: medium effort + a 20k cap leaves
+    // room for ~30 candidates of structured output without hitting the ceiling.
+    effort: 'medium',
+    maxTokens: 20000,
     budgetSensitive: tier === 'budget',
     purpose: `ranking ${candidates.length} names`,
   });
