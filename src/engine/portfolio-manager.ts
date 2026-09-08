@@ -68,6 +68,17 @@ async function reviewPosition(alpacaPos: AlpacaPosition, ctx: MarketContext): Pr
   const currentVolume = bars.bars[bars.bars.length - 1]?.v || 0;
   const volumeVsAvg = volumeAvg > 0 ? currentVolume / volumeAvg : 1;
 
+  // Legacy positions (opened before code-enforced exits) get an ATR stop from the current
+  // price right away — before any cooldown gate — so nothing sits unguarded below entry.
+  if (storedPosition && storedPosition.stopPrice == null) {
+    const atr = calculateATR(bars.bars);
+    const backfill = resolveStop({ price: currentPrice, side, proposedStop: null, atr: atr > 0 ? atr : null, atrMultiple: TRADING_RULES.atrStopMultiple });
+    storedPosition.stopPrice = backfill.stopPrice;
+    storedPosition.side = side;
+    await upsertPosition(storedPosition);
+    log.info(`${symbol}: backfilled ${backfill.source} stop $${backfill.stopPrice} (${backfill.stopDistancePct.toFixed(2)}% from $${currentPrice.toFixed(2)})`);
+  }
+
   // Trailing stop floor (the stop guard also enforces this every tick; this is the fallback)
   if (storedPosition?.trailingStop) {
     const floorPercent = parseFloat(storedPosition.trailingStop.floor);
@@ -239,17 +250,9 @@ async function reviewPosition(alpacaPos: AlpacaPosition, ctx: MarketContext): Pr
   }
 
   // The review may only tighten the code-enforced stop
-  let keptStop = tightenStop(side, storedPosition?.stopPrice ?? null, decision.newStopPrice, currentPrice);
+  const keptStop = tightenStop(side, storedPosition?.stopPrice ?? null, decision.newStopPrice, currentPrice);
   if (keptStop !== (storedPosition?.stopPrice ?? null)) {
     log.info(`${symbol}: stop tightened ${storedPosition?.stopPrice ?? 'none'} → ${keptStop}`);
-  }
-  // Legacy positions (opened before code-enforced exits) get an ATR stop from the current price
-  // so nothing sits unguarded below entry.
-  if (keptStop == null) {
-    const atr = calculateATR(bars.bars);
-    const backfill = resolveStop({ price: currentPrice, side, proposedStop: null, atr: atr > 0 ? atr : null, atrMultiple: TRADING_RULES.atrStopMultiple });
-    keptStop = backfill.stopPrice;
-    log.info(`${symbol}: backfilled ${backfill.source} stop $${keptStop} (${backfill.stopDistancePct.toFixed(2)}% from $${currentPrice.toFixed(2)})`);
   }
 
   // Update stored position
