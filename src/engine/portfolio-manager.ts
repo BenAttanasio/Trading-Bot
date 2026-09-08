@@ -1,5 +1,5 @@
 import { getPositions, AlpacaPosition } from '../services/alpaca/trading';
-import { getBars, calculateRSI, calculateVolumeAverage, Bar } from '../services/alpaca/market-data';
+import { getBars, calculateRSI, calculateVolumeAverage, calculateATR, Bar } from '../services/alpaca/market-data';
 import { getNewsForSymbol } from '../services/alpaca/news';
 import { getMarketContext, formatMarketContext, sectorPerformanceLine, MarketContext } from '../services/alpaca/market-context';
 import { callAIStructured } from '../services/ai/client';
@@ -11,6 +11,7 @@ import { Position, calculateThesisFreshness, positionSide } from '../services/db
 import { executeTrade } from './execution';
 import { closePosition } from './exits';
 import { tightenStop } from './stop-guard';
+import { resolveStop } from './sizing';
 import { TRADING_RULES } from '../config/trading-rules';
 import { createServiceLogger } from '../utils/logger';
 import { daysSince, minutesSince } from '../utils/time';
@@ -238,9 +239,17 @@ async function reviewPosition(alpacaPos: AlpacaPosition, ctx: MarketContext): Pr
   }
 
   // The review may only tighten the code-enforced stop
-  const keptStop = tightenStop(side, storedPosition?.stopPrice ?? null, decision.newStopPrice, currentPrice);
+  let keptStop = tightenStop(side, storedPosition?.stopPrice ?? null, decision.newStopPrice, currentPrice);
   if (keptStop !== (storedPosition?.stopPrice ?? null)) {
     log.info(`${symbol}: stop tightened ${storedPosition?.stopPrice ?? 'none'} → ${keptStop}`);
+  }
+  // Legacy positions (opened before code-enforced exits) get an ATR stop from the current price
+  // so nothing sits unguarded below entry.
+  if (keptStop == null) {
+    const atr = calculateATR(bars.bars);
+    const backfill = resolveStop({ price: currentPrice, side, proposedStop: null, atr: atr > 0 ? atr : null, atrMultiple: TRADING_RULES.atrStopMultiple });
+    keptStop = backfill.stopPrice;
+    log.info(`${symbol}: backfilled ${backfill.source} stop $${keptStop} (${backfill.stopDistancePct.toFixed(2)}% from $${currentPrice.toFixed(2)})`);
   }
 
   // Update stored position
