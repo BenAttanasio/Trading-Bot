@@ -9,7 +9,7 @@ import {
   normalizeNewTradeDecision,
   MorningResearchResult,
 } from '../services/ai/schemas';
-import { getActiveWatchlist, getPosition, insertResearch, getAllPositions } from '../services/db/queries';
+import { getActiveWatchlist, getPosition, insertResearch, getAllPositions, upsertPosition } from '../services/db/queries';
 import { Research } from '../services/db/models/research';
 import { executeTrade } from './execution';
 import { TRADING_RULES } from '../config/trading-rules';
@@ -247,6 +247,30 @@ async function evaluateAndExecute(research: MorningResearchResult, trigger: 'mor
         risks: research.risks,
       },
     });
+  }
+
+  // A fresh entry gets its thesis on the position record immediately (the review
+  // loop refreshes qty/P&L later), so the dashboard shows what the bot believes.
+  if (execution?.success && !(await getPosition(symbol))) {
+    const now = new Date();
+    await upsertPosition({
+      symbol,
+      entryPrice: data.currentPrice,
+      currentPrice: data.currentPrice,
+      quantity: 0,
+      unrealizedPL: 0,
+      unrealizedPLPercent: 0,
+      daysHeld: 0,
+      thesis: decision.thesis,
+      thesisLastUpdated: now,
+      thesisFreshness: 'fresh',
+      exitConditions: decision.exitConditions,
+      trailingStop: null,
+      entryTrigger: trigger,
+      tags: [research.sentiment, `conviction:${decision.conviction}`],
+      createdAt: now,
+      lastReviewedAt: now,
+    }).catch((err) => log.warn(`Could not seed position record for ${symbol}`, { err }));
   }
 
   // Every decision — BUY or PASS — leaves a scorable prediction behind.
