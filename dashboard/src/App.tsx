@@ -12,10 +12,11 @@ import { ConfigPanel } from './components/ConfigPanel';
 import { ActivityLog } from './components/ActivityLog';
 import { OutcomesPanel } from './components/OutcomesPanel';
 import { BotMemoryPanel } from './components/BotMemoryPanel';
+import { LearningTab } from './components/LearningPanels';
 import type { DashboardData, OutcomesData } from './types';
 
 // ─── Tab definition ──────────────────────────────────────
-type TabId = 'overview' | 'positions' | 'journal' | 'feed' | 'settings';
+type TabId = 'overview' | 'positions' | 'journal' | 'learning' | 'feed' | 'settings';
 
 interface TabDef {
   id: TabId;
@@ -30,24 +31,22 @@ function TabBar({ tabs, active, onSelect, stale }: {
   stale?: boolean;
 }) {
   return (
-    <div className="bg-[var(--bg-secondary)] border-b border-[var(--border)] flex items-center px-2">
+    <div className="bg-[var(--surface)] border-b border-[var(--divider)] flex items-center px-2">
       <nav className="flex flex-1">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => onSelect(tab.id)}
-            className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+            className={`px-5 py-2.5 text-[0.72rem] font-bold uppercase tracking-[0.18em] border-b-2 transition-colors flex items-center gap-2 ${
               active === tab.id
-                ? 'border-[var(--accent-blue)] text-[var(--text-primary)]'
-                : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-[var(--border)]'
+                ? 'border-[var(--accent)] text-[var(--text)]'
+                : 'border-transparent text-[var(--muted)] hover:text-[var(--text-secondary)] hover:border-[var(--divider)]'
             }`}
           >
             {tab.label}
             {tab.badge !== undefined && tab.badge > 0 && (
-              <span className={`text-xs px-1.5 py-0 rounded-full font-bold ${
-                active === tab.id
-                  ? 'bg-[var(--accent-blue)]/20 text-[var(--accent-blue)]'
-                  : 'bg-[var(--bg-hover)] text-[var(--text-muted)]'
+              <span className={`text-[0.65rem] px-1.5 py-0 rounded-full font-bold tracking-normal ${
+                active === tab.id ? 'badge-coral' : 'bg-[var(--bg-hover)] text-[var(--muted)]'
               }`}>
                 {tab.badge}
               </span>
@@ -56,7 +55,7 @@ function TabBar({ tabs, active, onSelect, stale }: {
         ))}
       </nav>
       {stale && (
-        <span className="text-xs text-[var(--accent-yellow)] pr-4">⚠ Stale data</span>
+        <span className="text-xs text-[var(--warn)] pr-4">⚠ Stale data</span>
       )}
     </div>
   );
@@ -65,10 +64,10 @@ function TabBar({ tabs, active, onSelect, stale }: {
 // ─── Loading / Error screens ─────────────────────────────
 function Connecting() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[var(--bg-primary)]">
+    <div className="min-h-screen flex items-center justify-center bg-[var(--bg)]">
       <div className="text-center space-y-3">
-        <div className="w-8 h-8 border-2 border-[var(--accent-blue)] border-t-transparent rounded-full animate-spin mx-auto" />
-        <div className="text-[var(--text-muted)]">Connecting to AI Trader...</div>
+        <div className="w-8 h-8 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin mx-auto" />
+        <div className="text-[var(--muted)]">Connecting to AI Trader...</div>
       </div>
     </div>
   );
@@ -76,11 +75,11 @@ function Connecting() {
 
 function ConnectError({ error }: { error: string }) {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[var(--bg-primary)]">
+    <div className="min-h-screen flex items-center justify-center bg-[var(--bg)]">
       <div className="text-center space-y-2">
-        <div className="text-[var(--accent-red)] text-lg font-semibold">Connection Error</div>
-        <div className="text-[var(--text-muted)] text-sm">{error}</div>
-        <div className="text-[var(--text-muted)] text-xs">Make sure the backend is running on port 3001</div>
+        <div className="text-[var(--crit)] text-lg font-semibold">Connection Error</div>
+        <div className="text-[var(--muted)] text-sm">{error}</div>
+        <div className="chart-hint">The API is served by the same process as this page — check the service is running.</div>
       </div>
     </div>
   );
@@ -110,10 +109,10 @@ function PositionsTab({ data }: { data: DashboardData }) {
   return (
     <div className="p-5 space-y-5 max-w-7xl mx-auto">
       {!hasPositions ? (
-        <div className="bg-[var(--bg-card)] rounded-lg border border-[var(--border)] p-16 text-center space-y-2">
+        <div className="tile p-16 text-center space-y-2">
           <div className="text-3xl mb-2">📭</div>
           <div className="text-[var(--text-secondary)] font-medium">No open positions</div>
-          <div className="text-[var(--text-muted)] text-sm">The bot is fully in cash, watching for opportunities.</div>
+          <div className="chart-hint">The bot is fully in cash, watching for opportunities.</div>
         </div>
       ) : (
         <>
@@ -179,8 +178,8 @@ function SettingsTab() {
 function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div className="mb-3">
-      <h2 className="font-semibold text-[var(--text-primary)]">{title}</h2>
-      {subtitle && <p className="text-xs text-[var(--text-muted)] mt-0.5">{subtitle}</p>}
+      <h2 className="section-title">{title}</h2>
+      {subtitle && <p className="chart-hint mt-0.5">{subtitle}</p>}
     </div>
   );
 }
@@ -213,12 +212,13 @@ function App() {
     { id: 'overview',   label: 'Overview' },
     { id: 'positions',  label: 'Positions', badge: data.positions.length },
     { id: 'journal',    label: 'Journal', badge: outcomesData?.stats.totalTrades },
+    { id: 'learning',   label: 'Learning' },
     { id: 'feed',       label: 'Feed' },
     { id: 'settings',  label: 'Settings' },
   ];
 
   return (
-    <div className="min-h-screen flex flex-col bg-[var(--bg-primary)]">
+    <div className="min-h-screen flex flex-col bg-[var(--bg)]">
       {/* ── Always-visible status bar ── */}
       <StatusIndicator
         botRunning={data.status.botRunning}
@@ -247,6 +247,7 @@ function App() {
         {activeTab === 'overview'  && <OverviewTab data={data} />}
         {activeTab === 'positions' && <PositionsTab data={data} />}
         {activeTab === 'journal'   && <JournalTab outcomesData={outcomesData ?? null} />}
+        {activeTab === 'learning'  && <LearningTab />}
         {activeTab === 'feed'      && <FeedTab data={data} />}
         {activeTab === 'settings'  && <SettingsTab />}
       </main>

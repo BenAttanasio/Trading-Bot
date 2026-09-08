@@ -24,6 +24,14 @@ export const api = {
   getWatchlist: () => fetchApi<any>('/watchlist'),
 
   getOutcomes: () => fetchApi<any>('/outcomes'),
+  getLearningProgress: () => fetchApi<any>('/learning/progress'),
+  getReflections: (limit = 14) => fetchApi<any>(`/learning/reflections?limit=${limit}`),
+  getPlaybook: () => fetchApi<any>('/learning/playbook'),
+  getChangeRequests: () => fetchApi<any>('/learning/change-requests'),
+  runJob: (name: string) => fetchApi<any>(`/admin/jobs/${name}`, { method: 'POST' }),
+  approveChangeRequest: (id: string) => fetchApi<any>(`/admin/change-requests/${id}/approve`, { method: 'POST' }),
+  rejectChangeRequest: (id: string) => fetchApi<any>(`/admin/change-requests/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason: 'rejected from dashboard' }) }),
+  fileChangeRequest: (title: string, description: string) => fetchApi<any>('/admin/change-requests', { method: 'POST', body: JSON.stringify({ title, description, rationale: 'filed from dashboard' }) }),
 
   pauseTrading: () => fetchApi<any>('/config/pause', { method: 'POST' }),
   resumeTrading: () => fetchApi<any>('/config/resume', { method: 'POST' }),

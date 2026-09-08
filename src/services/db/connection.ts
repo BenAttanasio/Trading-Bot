@@ -84,6 +84,31 @@ async function createIndexes(db: Db): Promise<void> {
     { key: { active: 1 } },
   ]);
 
+  // Bot state (kill switch, AI usage, starting equity, playbook)
+  await db.collection('bot_state').createIndexes([
+    { key: { key: 1 }, unique: true },
+  ]);
+
+  // Learning layer
+  await db.collection('predictions').createIndexes([
+    { key: { status: 1, dueAt: 1 } },
+    { key: { symbol: 1, createdAt: -1 } },
+    { key: { createdAt: -1 } },
+  ]);
+  await db.collection('reflections').createIndexes([
+    { key: { createdAt: -1 } },
+    { key: { type: 1, date: -1 } },
+  ]);
+  await db.collection('benchmarks').createIndexes([
+    { key: { date: 1 }, unique: true },
+  ]);
+  await db.collection('playbook_versions').createIndexes([
+    { key: { version: -1 } },
+  ]);
+  await db.collection('change_requests').createIndexes([
+    { key: { status: 1, createdAt: -1 } },
+  ]);
+
   // TTL indexes — auto-delete old documents to keep storage bounded
   // decision_log: keep 90 days (high-volume collection)
   await db.collection('decision_log').createIndex(

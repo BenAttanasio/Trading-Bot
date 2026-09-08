@@ -5,6 +5,11 @@ import { getActiveWatchlist } from './services/db/queries';
 import { startScheduler, stopScheduler } from './services/scheduler/cron';
 import { logMarketState } from './services/scheduler/market-hours';
 import { startServer } from './api/server';
+import { loadTradingState } from './engine/execution';
+import { loadAIUsageState } from './services/ai/client';
+import { ensureStartingEquity } from './services/db/bot-state';
+import { loadPlaybook } from './services/playbook';
+import { reconcileDeployments } from './engine/self-improve';
 import logger from './utils/logger';
 import { formatCurrency } from './utils/formatters';
 
@@ -29,6 +34,12 @@ async function main() {
     process.exit(1);
   }
 
+  // 2b. Restore persisted runtime state (kill switch, AI usage counters)
+  await loadTradingState();
+  await loadAIUsageState();
+  await loadPlaybook();
+  await reconcileDeployments();
+
   // 3. Connect to Alpaca
   const alpacaOk = await verifyConnection();
   if (!alpacaOk) {
@@ -39,7 +50,8 @@ async function main() {
   // 4. Log starting state
   const account = await getAccount();
   const portfolioValue = parseFloat(account.portfolio_value);
-  logger.info(`Portfolio value: ${formatCurrency(portfolioValue)}`);
+  const startingEquity = await ensureStartingEquity(portfolioValue, env.STARTING_EQUITY);
+  logger.info(`Portfolio value: ${formatCurrency(portfolioValue)} (baseline ${formatCurrency(startingEquity)})`);
   logger.info(`Cash available: ${formatCurrency(parseFloat(account.cash))}`);
   logger.info(`Mode: ${env.isPaper ? 'PAPER TRADING' : '⚠️  LIVE TRADING'}`);
 

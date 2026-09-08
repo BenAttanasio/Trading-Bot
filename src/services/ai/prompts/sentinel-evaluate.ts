@@ -1,6 +1,4 @@
-export const SENTINEL_SYSTEM_PROMPT = `You are a financial news analyst working for an algorithmic trading desk. Your job is to rapidly evaluate news items and market events for their potential trading impact.
-
-You MUST respond with valid JSON only, no other text. Do not include markdown formatting.`;
+export const SENTINEL_SYSTEM_PROMPT = `You are a financial news analyst on an algorithmic trading desk. You rapidly triage news items and market events for immediate trading impact. Most items are noise: reserve urgency >= 7 for events that change the thesis today (earnings surprises, guidance changes, M&A, regulatory actions, major contracts, large unexplained moves).`;
 
 export function buildSentinelEvaluatePrompt(params: {
   symbol: string;
@@ -18,12 +16,5 @@ CURRENT PRICE: $${params.currentPrice.toFixed(2)}
 ${params.priceChange !== undefined ? `PRICE CHANGE (15m): ${params.priceChange > 0 ? '+' : ''}${params.priceChange.toFixed(2)}%` : ''}
 ${params.volumeMultiple !== undefined ? `VOLUME: ${params.volumeMultiple.toFixed(1)}x average` : ''}
 
-Respond with JSON:
-{
-  "urgency": <1-10 integer, 10 = most urgent>,
-  "direction": "bullish" | "bearish" | "neutral",
-  "summary": "<1-2 sentence impact assessment>",
-  "suggestedAction": "escalate" | "queue" | "ignore",
-  "reasoning": "<brief reasoning>"
-}`;
+Rate urgency 1-10, call the direction, and say whether to escalate (research now), queue (next pulse), or ignore.`;
 }

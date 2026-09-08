@@ -40,7 +40,7 @@ function computeBotMood(decisions: DecisionLog[], positionCount: number): BotMoo
   return { label: 'NEUTRAL', description: 'Holding current positions', colorKey: 'blue' };
 }
 
-function computeNextPulse(marketState: string): { time: string; label: string } {
+export function computeNextPulse(marketState: string): { time: string; label: string } {
   const now = new Date();
   const etHour = getETHour(now);
   const interval = TRADING_RULES.intradayPulseIntervalMinutes;

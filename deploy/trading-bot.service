@@ -1,0 +1,22 @@
+[Unit]
+Description=AI Trader (trading bot + dashboard)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/trading-bot/current
+EnvironmentFile=/home/pi/trading-bot/shared/.env
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=DASHBOARD_DIST=/home/pi/trading-bot/current/dashboard/dist
+Environment=LOG_DIR=/home/pi/trading-bot/shared/logs
+Environment=PLAYBOOK_MIRROR_DIR=/home/pi/trading-bot/shared/playbook
+Environment=SELF_IMPROVE_REPO_DIR=/home/pi/trading-bot/repo
+Environment=RELEASE_FILE=/home/pi/trading-bot/current/RELEASE
+ExecStart=/usr/bin/node /home/pi/trading-bot/current/dist/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

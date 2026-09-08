@@ -47,12 +47,18 @@ export async function getTradesForSymbol(symbol: string, days: number = 7): Prom
     .toArray();
 }
 
+/** Drop `_id` before `$set` — updating an existing doc with its own `_id` throws E11000. */
+function withoutId<T extends { _id?: ObjectId }>(doc: T): Omit<T, '_id'> {
+  const { _id, ...rest } = doc;
+  return rest;
+}
+
 // ─── Positions ───────────────────────────────────────────
 
 export async function upsertPosition(position: Position): Promise<void> {
   await getDb().collection<Position>('positions').updateOne(
     { symbol: position.symbol },
-    { $set: position },
+    { $set: withoutId(position) },
     { upsert: true }
   );
 }
@@ -111,7 +117,7 @@ export async function getRecentAlerts(limit: number = 50): Promise<Alert[]> {
 export async function upsertDailySummary(summary: DailySummary): Promise<void> {
   await getDb().collection<DailySummary>('daily_summaries').updateOne(
     { date: summary.date },
-    { $set: summary },
+    { $set: withoutId(summary) },
     { upsert: true }
   );
 }
@@ -139,7 +145,7 @@ export async function getActiveWatchlist(): Promise<WatchlistItem[]> {
 export async function addToWatchlist(item: WatchlistItem): Promise<void> {
   await getDb().collection<WatchlistItem>('watchlist').updateOne(
     { symbol: item.symbol },
-    { $set: item },
+    { $set: withoutId(item) },
     { upsert: true }
   );
 }

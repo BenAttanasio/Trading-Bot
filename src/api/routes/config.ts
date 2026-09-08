@@ -13,13 +13,21 @@ configRouter.get('/', (req, res) => {
 });
 
 // POST /api/config/pause — kill switch: pause all trading
-configRouter.post('/pause', (req, res) => {
-  pauseTrading();
-  res.json({ success: true, tradingPaused: true, message: 'Trading paused' });
+configRouter.post('/pause', async (req, res) => {
+  try {
+    await pauseTrading();
+    res.json({ success: true, tradingPaused: true, message: 'Trading paused' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // POST /api/config/resume — resume trading
-configRouter.post('/resume', (req, res) => {
-  resumeTrading();
-  res.json({ success: true, tradingPaused: false, message: 'Trading resumed' });
+configRouter.post('/resume', async (req, res) => {
+  try {
+    await resumeTrading();
+    res.json({ success: true, tradingPaused: false, message: 'Trading resumed' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 });

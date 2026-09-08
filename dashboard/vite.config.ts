@@ -2,13 +2,12 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-const apiTarget = `http://localhost:${process.env.API_PORT || '3003'}`;
+// Dev only: the production build is served by the Express process itself
+// (see src/api/server.ts), so there is no proxy and no preview server to configure.
+const apiTarget = `http://localhost:${process.env.API_PORT || process.env.PORT || '3001'}`;
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  preview: {
-    allowedHosts: ['raspberrypi.local', 'localhost'],
-  },
   server: {
     port: 5173,
     proxy: {

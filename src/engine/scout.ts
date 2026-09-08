@@ -1,14 +1,22 @@
 import { gatherMarketData, GatheredMarketData } from '../services/alpaca/gather-data';
-import { callAIJson, BudgetExceededError } from '../services/ai/client';
-import { MORNING_RESEARCH_SYSTEM_PROMPT, buildMorningResearchPrompt } from '../services/ai/prompts/morning-research';
-import { TRADE_DECISION_SYSTEM_PROMPT, buildNewTradeDecisionPrompt } from '../services/ai/prompts/trade-decision';
-import { parseMorningResearch, parseNewTradeDecision, MorningResearchResult } from '../services/ai/parser';
+import { callAIStructured, BudgetExceededError, MODEL_IDS } from '../services/ai/client';
+import { getMorningResearchSystemPrompt, buildMorningResearchPrompt } from '../services/ai/prompts/morning-research';
+import { getTradeDecisionSystemPrompt, buildNewTradeDecisionPrompt } from '../services/ai/prompts/trade-decision';
+import {
+  MorningResearchSchema,
+  NewTradeDecisionSchema,
+  normalizeMorningResearch,
+  normalizeNewTradeDecision,
+  MorningResearchResult,
+} from '../services/ai/schemas';
 import { getActiveWatchlist, getPosition, insertResearch, getAllPositions } from '../services/db/queries';
 import { Research } from '../services/db/models/research';
 import { executeTrade } from './execution';
 import { TRADING_RULES } from '../config/trading-rules';
 import { createServiceLogger } from '../utils/logger';
 import { formatCurrency } from '../utils/formatters';
+import { getPlaybookBlock } from '../services/playbook';
+import { recordPrediction } from './predictions';
 
 const log = createServiceLogger('Scout');
 
@@ -78,9 +86,11 @@ async function researchSymbol(symbol: string, sector: string, budgetMode = false
     log.info(`Using fast model for ${symbol} research (limited data: ${data.barCount} bars)`);
   }
 
-  // Research with Claude
-  const aiResponse = await callAIJson<Record<string, unknown>>({
-    systemPrompt: MORNING_RESEARCH_SYSTEM_PROMPT,
+  // Research with Claude (structured output, adaptive thinking on fast/deep tiers)
+  const parsed = await callAIStructured({
+    schema: MorningResearchSchema,
+    systemPrompt: getMorningResearchSystemPrompt(),
+    cachedBlocks: [getPlaybookBlock()],
     userPrompt: buildMorningResearchPrompt({
       symbol,
       sector,
@@ -101,11 +111,12 @@ async function researchSymbol(symbol: string, sector: string, budgetMode = false
       missingData: data.missing,
     }),
     model: modelTier,
-    maxTokens: budgetMode ? 1024 : 4096,
+    effort: modelTier === 'deep' ? 'high' : 'medium',
     budgetSensitive: budgetMode,
+    purpose: `research ${symbol}`,
   });
 
-  const research = parseMorningResearch(aiResponse);
+  const research = normalizeMorningResearch(parsed, TRADING_RULES.maxPositionSizeDollars);
   research.symbol = symbol;
 
   // Store research report
@@ -120,7 +131,7 @@ async function researchSymbol(symbol: string, sector: string, budgetMode = false
     risks: research.risks,
     priceTarget: research.priceTarget,
     recommendation: research.recommendation,
-    modelUsed: modelTier === 'deep' ? 'claude-opus-4-6' : modelTier === 'fast' ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001',
+    modelUsed: MODEL_IDS[modelTier],
     createdAt: new Date(),
   };
   await insertResearch(researchDoc);
@@ -154,8 +165,10 @@ async function evaluateAndExecute(research: MorningResearchResult, trigger: 'mor
   }
 
   // Get trade decision from AI
-  const aiResponse = await callAIJson<Record<string, unknown>>({
-    systemPrompt: TRADE_DECISION_SYSTEM_PROMPT,
+  const parsed = await callAIStructured({
+    schema: NewTradeDecisionSchema,
+    systemPrompt: getTradeDecisionSystemPrompt(),
+    cachedBlocks: [getPlaybookBlock()],
     userPrompt: buildNewTradeDecisionPrompt({
       symbol,
       sector: '',
@@ -172,18 +185,22 @@ async function evaluateAndExecute(research: MorningResearchResult, trigger: 'mor
       missingData: data.missing,
     }),
     model: 'fast',
+    effort: 'medium',
+    purpose: `trade-decision ${symbol}`,
   });
 
-  const decision = parseNewTradeDecision(aiResponse);
+  const decision = normalizeNewTradeDecision(parsed, TRADING_RULES.maxPositionSizeDollars);
   log.info(`Trade decision for ${symbol}: ${decision.action}`, {
     conviction: decision.conviction,
     reasoning: decision.reasoning,
     size: decision.positionSize,
+    prediction: decision.prediction,
   });
 
+  let execution: Awaited<ReturnType<typeof executeTrade>> | null = null;
   if (decision.action === 'BUY' && decision.conviction >= 4) {
     const currentVolume = data.dailyBar?.v || data.bars[data.bars.length - 1]?.v || 0;
-    await executeTrade({
+    execution = await executeTrade({
       symbol,
       action: 'BUY',
       notional: Math.min(decision.positionSize, TRADING_RULES.maxPositionSizeDollars),
@@ -195,8 +212,29 @@ async function evaluateAndExecute(research: MorningResearchResult, trigger: 'mor
         volume: currentVolume,
         changePercent: data.priceChange5d || 0,
       },
+      aiExtras: {
+        thesis: decision.thesis,
+        prediction: decision.prediction,
+        exitConditions: decision.exitConditions,
+        timeHorizon: decision.timeHorizon,
+        researchConviction: research.conviction,
+        catalysts: research.catalysts,
+        risks: research.risks,
+      },
     });
   }
+
+  // Every decision — BUY or PASS — leaves a scorable prediction behind.
+  await recordPrediction({
+    symbol,
+    decision,
+    research,
+    data,
+    trigger,
+    acted: execution?.success === true,
+    orderId: execution?.order?.id ?? null,
+    modelUsed: MODEL_IDS.fast,
+  });
 }
 
 export async function researchAndTrade(symbol: string, sector: string, trigger: 'sentinel' | 'manual' = 'sentinel', budgetMode = false): Promise<void> {

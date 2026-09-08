@@ -1,0 +1,4 @@
+{
+  "_comment": "Runtime-tunable overrides applied on top of env defaults. Only keys in TUNABLE_BOUNDS are honored and every value is clamped. Empty means 'use env defaults'.",
+  "params": {}
+}

@@ -1,4 +1,5 @@
 import { TRADING_RULES } from '../config/trading-rules';
+import { HARD_LIMITS } from '../config/hard-limits';
 import { getAccount } from '../services/alpaca/client';
 import { getPositions } from '../services/alpaca/trading';
 import {
@@ -48,6 +49,13 @@ export async function evaluateRisk(proposal: TradeProposal): Promise<RiskCheckRe
     checks.positionSizeWithinLimit = proposal.action === 'SELL' || proposal.notional <= TRADING_RULES.maxPositionSizeDollars;
     if (!checks.positionSizeWithinLimit) {
       reasons.push(`Position size $${proposal.notional} exceeds max $${TRADING_RULES.maxPositionSizeDollars}`);
+    }
+
+    // 1b. Hard limit: no single buy may exceed a fixed % of account equity, whatever the rules say
+    const hardMaxPosition = portfolioValue * (HARD_LIMITS.maxPositionPercentOfEquity / 100);
+    checks.withinHardPositionLimit = proposal.action === 'SELL' || portfolioValue <= 0 || proposal.notional <= hardMaxPosition;
+    if (!checks.withinHardPositionLimit) {
+      reasons.push(`HARD LIMIT: $${proposal.notional} exceeds ${HARD_LIMITS.maxPositionPercentOfEquity}% of equity ($${hardMaxPosition.toFixed(2)})`);
     }
 
     // 2 & 3. Cooldown and revenge-trading checks
@@ -119,9 +127,11 @@ export async function evaluateRisk(proposal: TradeProposal): Promise<RiskCheckRe
     const dailyPLPercent = lastEquity > 0
       ? ((portfolioValue - lastEquity) / lastEquity) * 100
       : 0;
-    checks.dailyLossCircuitBreakerOff = dailyPLPercent > -TRADING_RULES.maxDailyLossPercent;
+    // The configured limit can be tightened by env/playbook but never loosened past the hard ceiling
+    const effectiveMaxDailyLoss = Math.min(TRADING_RULES.maxDailyLossPercent, HARD_LIMITS.maxDailyLossPercent);
+    checks.dailyLossCircuitBreakerOff = dailyPLPercent > -effectiveMaxDailyLoss;
     if (!checks.dailyLossCircuitBreakerOff) {
-      reasons.push(`Circuit breaker: portfolio down ${dailyPLPercent.toFixed(2)}% today (limit: -${TRADING_RULES.maxDailyLossPercent}%)`);
+      reasons.push(`Circuit breaker: portfolio down ${dailyPLPercent.toFixed(2)}% today (limit: -${effectiveMaxDailyLoss}%)`);
     }
 
     // ─── Diversification checks ────────────────────────

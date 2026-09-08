@@ -1,9 +1,10 @@
 import { getPositions, AlpacaPosition } from '../services/alpaca/trading';
 import { getSnapshot, getBars, calculateRSI, calculateVolumeAverage, Bar } from '../services/alpaca/market-data';
 import { getNewsForSymbol } from '../services/alpaca/news';
-import { callAIJson } from '../services/ai/client';
-import { TRADE_DECISION_SYSTEM_PROMPT, buildPositionReviewPrompt } from '../services/ai/prompts/trade-decision';
-import { parsePositionReview, PositionReviewResult } from '../services/ai/parser';
+import { callAIStructured } from '../services/ai/client';
+import { getTradeDecisionSystemPrompt, buildPositionReviewPrompt } from '../services/ai/prompts/trade-decision';
+import { getPlaybookBlock } from '../services/playbook';
+import { PositionReviewSchema, normalizePositionReview } from '../services/ai/schemas';
 import { getAllPositions, upsertPosition, removePosition, getPosition, getRecentDecisions, insertDecisionLog, insertTradeOutcome } from '../services/db/queries';
 import { Position, calculateThesisFreshness } from '../services/db/models/position';
 import { executeTrade } from './execution';
@@ -140,9 +141,11 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
     }
   }
 
-  // Ask AI for decision
-  const aiResponse = await callAIJson<Record<string, unknown>>({
-    systemPrompt: TRADE_DECISION_SYSTEM_PROMPT,
+  // Ask AI for decision (deep model + higher effort when the thesis is stale)
+  const parsed = await callAIStructured({
+    schema: PositionReviewSchema,
+    systemPrompt: getTradeDecisionSystemPrompt(),
+    cachedBlocks: [getPlaybookBlock()],
     userPrompt: buildPositionReviewPrompt({
       symbol,
       entryPrice,
@@ -156,9 +159,11 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
       sectorPerformance: 'market average', // simplified
     }),
     model: thesisFreshness === 'stale' ? 'deep' : 'fast',
+    effort: thesisFreshness === 'stale' ? 'high' : 'medium',
+    purpose: `position-review ${symbol}`,
   });
 
-  const decision = parsePositionReview(aiResponse);
+  const decision = normalizePositionReview(parsed);
   log.info(`AI decision for ${symbol}: ${decision.action} (conviction: ${decision.conviction})`, {
     reasoning: decision.reasoning,
   });

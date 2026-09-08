@@ -122,13 +122,15 @@ export function PerformanceChart({ summaries, portfolioValue }: PerformanceChart
   const baseData = filtered.length > 0 ? filtered : allData;
   const periodStart = baseData[0]?.value ?? 0;
   const historicalData = baseData.map((d) => ({ ...d, pnl: d.value - periodStart }));
+  // Color grammar: green when up over the charted period, red when down.
+  const periodDown = (historicalData[historicalData.length - 1]?.value ?? 0) < periodStart;
 
   // Historical chart config
   const dataKey = metric === 'portfolio' ? 'value' : metric === 'invested' ? 'invested' : 'pnl';
   const lineColor =
-    metric === 'portfolio' ? 'var(--accent-blue)' :
-    metric === 'invested'  ? 'var(--accent-green)' :
-                             '#9b59b6';
+    metric === 'portfolio' ? (periodDown ? 'var(--crit)' : 'var(--ok)') :
+    metric === 'invested'  ? 'var(--info)' :
+                             (periodDown ? 'var(--crit)' : 'var(--ok)');
   const yLabel =
     metric === 'portfolio' ? 'Portfolio' :
     metric === 'invested'  ? 'Invested' :
@@ -145,14 +147,14 @@ export function PerformanceChart({ summaries, portfolioValue }: PerformanceChart
   const liveGain = currentLive - sessionStart;
   const liveGainPct = sessionStart !== 0 ? (liveGain / sessionStart) * 100 : 0;
   const isAboveStart = liveGain >= 0;
-  const liveColorHex = isAboveStart ? '#00d68f' : '#ff4d6a';
+  const liveColorHex = isAboveStart ? '#3fb950' : '#f85149';
   const liveColorVar = isAboveStart ? 'var(--accent-green)' : 'var(--accent-red)';
   const liveDomain = computeDomain(liveData.map((d) => d.value));
 
   const tooltipStyle = {
     backgroundColor: 'var(--bg-card)',
     border: '1px solid var(--border)',
-    borderRadius: '8px',
+    borderRadius: '0.6rem',
     fontSize: '13px',
     color: 'var(--text-primary)',
   };
@@ -160,7 +162,7 @@ export function PerformanceChart({ summaries, portfolioValue }: PerformanceChart
   const tickStyle = { fontSize: 12, fill: 'var(--text-muted)' };
 
   return (
-    <div className="bg-[var(--bg-card)] rounded-lg border border-[var(--border)] p-4 h-full flex flex-col">
+    <div className="tile h-full flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         {/* Left: metric toggles or live P&L */}
@@ -174,10 +176,10 @@ export function PerformanceChart({ summaries, portfolioValue }: PerformanceChart
                   className={`px-4 py-2 text-sm rounded font-medium transition-colors ${
                     metric === m
                       ? m === 'portfolio'
-                        ? 'bg-[var(--accent-blue)] text-white'
+                        ? 'bg-[var(--bg-hover)] text-[var(--text)]'
                         : m === 'invested'
-                          ? 'bg-[var(--accent-green)] text-[#0f1117]'
-                          : 'bg-[#9b59b6] text-white'
+                          ? 'bg-[var(--bg-hover)] text-[var(--text)]'
+                          : 'bg-[var(--bg-hover)] text-[var(--text)]'
                       : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
                   }`}
                 >
@@ -207,7 +209,7 @@ export function PerformanceChart({ summaries, portfolioValue }: PerformanceChart
               className={`px-4 py-2 text-sm rounded font-medium transition-colors ${
                 range === r
                   ? r === 'Live'
-                    ? 'bg-[var(--accent-red)] text-white'
+                    ? 'badge-coral'
                     : 'bg-[var(--bg-hover)] text-[var(--text-primary)]'
                   : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
               }`}

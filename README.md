@@ -1,265 +1,115 @@
 # AI Trader
 
-Autonomous AI-powered stock trading bot with a real-time dashboard. Researches your watchlist using Claude (Opus/Sonnet/Haiku), manages an Alpaca paper or live portfolio, and streams live decisions to a React dashboard.
+An autonomous, self-reflecting trading bot. It researches a watchlist with Claude, trades an Alpaca paper (or live) account, records a falsifiable prediction for every decision, scores those predictions when they come due, writes itself a nightly post-mortem and a weekly deep review, maintains its own playbook, and, when the playbook cannot express a fix, files a change request and implements it with Claude Code on the box it runs on.
 
-> **Disclaimer:** This software can place real trades with real money. It is provided as-is for educational purposes and is **not financial advice**. You supply your own API keys via a local `.env` file (never committed). Use paper trading first, and run live at your own risk.
+It ships with a dashboard and a compact `/api/summary` other dashboards can read.
 
-## How It Works
+> **Disclaimer:** This software can place real trades with real money. It is provided as-is for educational purposes and is **not financial advice**. You supply your own API keys via a local `.env` (never committed). Use paper trading first, and run live at your own risk.
 
-The bot runs several overlapping workflows:
+## How it works
 
-| Workflow | When | What it does |
-|----------|------|-------------|
-| **Morning Research** | 9:35 AM ET | Researches all watchlist stocks with Claude Opus, buys top 3 conviction plays |
-| **Intraday Pulse** | Every 30 min, 4 AM–8 PM ET | Reviews all held positions, scouts 2 unwatched symbols with Haiku |
-| **Sentinel** | Every 60s, always-on | Watches news and price spikes; escalates urgency ≥ 7 or moves ≥ 5% to immediate deep research |
-| **EOD Summary** | 4:05 PM ET | Generates a daily summary of trades, P&L, and portfolio state |
+| Workflow | When (ET) | What it does |
+|---|---|---|
+| **Morning research** | 9:35 Mon–Fri | Opus 5 researches each watchlist symbol; Sonnet 5 decides; top-conviction buys are placed |
+| **Intraday pulse** | every 30 min, 4:00–19:59 | Reviews held positions; scouts two unheld watchlist symbols with Haiku 4.5 |
+| **Sentinel** | every 60 s during extended hours | Triages news and price spikes; urgency ≥ 7 escalates to immediate research |
+| **EOD summary + benchmark** | 16:05 Mon–Fri | Daily summary; records equity next to SPY's close |
+| **Nightly reflection** | 19:00 Mon–Fri | Scores due predictions, judges closed trades (thesis right / wrong / right for the wrong reason / timing), appends lessons to the playbook |
+| **Weekly deep review** | Sunday 10:00 | Opus 5 with web search rewrites the playbook, tunes parameters (within hard bounds), files code change requests |
+| **Self-improve** | Sunday 11:30 + weekday evenings | Implements change requests with Claude Code in a git worktree, verifies, auto-merges/deploys or waits for approval |
 
-Every decision — including HOLDs — is logged to `decision_log` in MongoDB with the AI reasoning, conviction score, and market snapshot.
+Every decision, including HOLD and PASS, is logged with the AI's reasoning, conviction, and a market snapshot. Every BUY and PASS also records a prediction (direction, expected move, horizon, invalidation, confidence) that is scored later, so the bot's calibration is measured, not assumed.
 
-### Robustness Guardrails
+### Safety model
 
-The bot is designed to run 24/7 without supervision. Key protections:
+- **Hard limits** (`src/config/hard-limits.ts`) are absolute ceilings enforced in code: max daily loss, max position as % of equity, max trades/day, minimum cooldowns. Neither the playbook nor the self-improvement agent can loosen them.
+- **Live gate**: a non-paper Alpaca URL refuses to start unless `LIVE_TRADING=I_UNDERSTAND`.
+- **Kill switch** persists across restarts (`bot_state`), as do AI usage counters and the playbook.
+- **Risk manager**: 11 pre-trade checks (size, hard % of equity, cooldowns, exposure, daily loss breaker, concentration, oscillation, flip-flop); fails closed.
+- **Self-modification gate**: in paper mode only allowlisted paths (strategy, prompts, indicators, dashboard, tests) auto-merge; risk/execution/env/hard-limits/deploy changes wait for a human tap. Once live, every code change waits.
+- **Budget**: daily token budget (cache reads counted at 10%), per-change dollar cap for the coding agent.
 
-- **Position review cooldown** (default 90 min) — the AI only re-evaluates a held position every 90 minutes, preventing margin-of-error false signals from accumulating across dozens of daily checks
-- **Sell cooldown** (default 60 min) — once a symbol is sold, it can't be sold again for 60 minutes, guarding against duplicate executions if jobs overlap
-- **Sentinel deduplication** — a per-symbol escalation cooldown (default 30 min) prevents simultaneous news + price-spike events from triggering two concurrent research calls on the same stock
-- **Job concurrency guard** — if a pulse or morning cycle is still running when the next cron fires, the new invocation is skipped rather than running in parallel
-- **API timeouts** — all Alpaca requests abort after 15 seconds; all AI SDK calls abort after 60 seconds; a hung API cannot block the pipeline indefinitely
-- **Daily AI token budget** — configurable cap on Anthropic token usage; budget-sensitive calls (sentinel, intraday pulse) skip silently when the budget is exhausted
-- **Risk manager** — 10 pre-trade checks including position size, portfolio exposure, daily loss circuit breaker, cooldown, oscillation detection, and AI flip-flop guard
-- **Kill switch** — `pauseTrading()` / `resumeTrading()` halt all execution immediately without stopping the process
-- **MongoDB TTL** — `decision_log` (90 days), `alerts` (30 days), `research` (90 days) auto-expire; trades and summaries are kept forever as financial records
+## Stack
 
----
+Node 20+, TypeScript, Express, MongoDB, Alpaca (raw REST), Anthropic SDK (structured outputs, adaptive thinking, prompt caching, server-side web search). Dashboard: Vite + React + Tailwind 4. Tests: vitest.
 
-## Prerequisites
-
-- **[Alpaca](https://alpaca.markets)** account — free paper trading or funded live account
-- **[Anthropic](https://console.anthropic.com)** API key — Claude Opus/Sonnet/Haiku
-- **[MongoDB](https://www.mongodb.com/atlas)** — free Atlas cluster works fine, or local `mongod`
-- **Node.js 20+**
-
----
-
-## Quick Start (PC / Local)
-
-### 1. Install dependencies
+## Quick start (local)
 
 ```bash
 npm install
 cd dashboard && npm install && cd ..
+cp .env.example .env      # fill in Alpaca, Anthropic, MongoDB
+npm run seed              # default watchlist
+npm run dev               # bot + API on :3001 (serves dashboard/dist if built)
+cd dashboard && npm run dev   # dashboard dev server on :5173 (proxies /api)
 ```
 
-### 2. Configure environment
+`npm test`, `npm run typecheck`, `npm run build`, `npm run build:dashboard`.
 
-Create a `.env` file in the project root:
+## Endpoints
 
-```env
-# Alpaca
-ALPACA_API_KEY=your_key
-ALPACA_SECRET_KEY=your_secret
-ALPACA_BASE_URL=https://paper-api.alpaca.markets   # or live: https://api.alpaca.markets
-ALPACA_DATA_URL=https://data.alpaca.markets
+| Route | Purpose |
+|---|---|
+| `GET /api/health` | liveness, mode |
+| `GET /api/summary` | compact snapshot for external dashboards |
+| `GET /api/dashboard` | everything the bundled dashboard needs |
+| `GET /api/learning/progress` | equity vs SPY, calibration, recent predictions |
+| `GET /api/learning/reflections` | nightly and weekly reflections |
+| `GET /api/learning/playbook` | current playbook, tuned params, version history |
+| `GET /api/learning/change-requests` | self-modification queue |
+| `POST /api/config/pause` / `resume` | kill switch |
+| `POST /api/admin/jobs/:name` | run a job now (`morning`, `pulse`, `eod`, `score-predictions`, `nightly-reflection`, `weekly-review`, `self-improve`) |
+| `POST /api/admin/change-requests` (+ `/:id/approve`, `/:id/reject`) | file / approve / reject change requests |
 
-# Anthropic
-ANTHROPIC_API_KEY=your_key
+Admin routes accept requests from the box itself or a private LAN address; from anywhere else they need the `x-admin-token` header matching `ADMIN_TOKEN`.
 
-# MongoDB
-MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/
-MONGODB_DB_NAME=trading_bot
+## Deploying to the Raspberry Pi
 
-# Optional tuning (shown with defaults)
-MAX_POSITION_SIZE_DOLLARS=50
-MAX_PORTFOLIO_EXPOSURE=500
-MAX_DAILY_TRADES=10
-MAX_DAILY_LOSS_PERCENT=3
-COOLDOWN_MINUTES=120
-REVENGE_TRADE_COOLDOWN_HOURS=24
-SELL_COOLDOWN_MINUTES=60
-POSITION_REVIEW_COOLDOWN_MINUTES=90
-SENTINEL_ESCALATION_COOLDOWN_MINUTES=30
-SENTINEL_POLL_INTERVAL_SECONDS=60
-INTRADAY_PULSE_INTERVAL_MINUTES=30
-DAILY_AI_TOKEN_BUDGET=200000
-ALPACA_API_TIMEOUT_MS=15000
-AI_TIMEOUT_MS=60000
+The bot runs as a **systemd user unit** (`trading-bot`) on port 3001 and serves its own dashboard, so there is one process and one bookmark: `http://raspberrypi.local:3001`.
+
+Layout on the Pi:
+
+```
+~/trading-bot/releases/<sha>/   built app (dist/, dashboard/dist/, node_modules, playbook/)
+~/trading-bot/current -> releases/<sha>
+~/trading-bot/shared/.env       secrets (chmod 600)
+~/trading-bot/shared/logs/      winston logs + release build logs
+~/trading-bot/shared/playbook/  mirror of the live playbook
+~/trading-bot/repo/             git checkout used by the self-improvement pipeline
 ```
 
-### 3. Seed watchlist
+From Windows:
+
+```powershell
+./deploy/deploy.ps1 -FirstDeploy   # first time: copies .env, installs + enables the unit, ships a release
+./deploy/deploy.ps1                # afterwards: build, ship, activate, health-check (auto-rollback on failure)
+./deploy/deploy.ps1 -SkipDashboard # backend only
+```
+
+`deploy/remote-install.sh` (on the Pi) extracts the release, runs `npm ci --omit=dev`, flips `current`, restarts the unit, health-checks, and rolls back to the previous release if the check fails. `deploy/pi-build-release.sh` is the same flow started from a git commit on the Pi; the self-improvement pipeline launches it detached via `systemd-run` because the deploy restarts the bot itself.
+
+Useful:
 
 ```bash
-npm run seed
+ssh pi@raspberrypi.local 'systemctl --user status trading-bot'
+ssh pi@raspberrypi.local 'journalctl --user -u trading-bot -f'
+ssh pi@raspberrypi.local 'curl -s localhost:3001/api/summary'
 ```
 
-### 4. Run
+MongoDB runs on the Pi in Docker (`mongo:7`, bound to the LAN with auth). Any MongoDB works; set `MONGODB_URI`.
 
-Open two terminals:
+### Self-improvement prerequisites on the Pi
 
-**Terminal 1 — Backend** (project root):
-```bash
-npm run dev
-```
-Wait for `API server running on port 3001`.
+`git`, `gh` (optional — for pushing branches and opening PRs), and `@anthropic-ai/claude-code` installed globally; a checkout at `SELF_IMPROVE_REPO_DIR`; `ANTHROPIC_API_KEY` in `shared/.env`. Set `SELF_IMPROVE_BASE_BRANCH` to the branch the bot should build on.
 
-**Terminal 2 — Dashboard** (`dashboard/` folder):
-```bash
-cd dashboard
-npm run dev
-```
+## Unified Dashboard integration
 
-Open **http://localhost:5173**.
+The bot exposes `GET /api/summary`. A separate kiosk dashboard can poll it every minute and render a Trading view without sharing any code; only the base URL is configured on that side.
 
----
+## Configuration
 
-## Deploying to a Server / Cloud
-
-Build and run the compiled output:
-
-```bash
-npm run build          # compiles TypeScript → dist/
-npm start              # runs dist/index.js
-
-cd dashboard
-npm run build          # builds React → dashboard/dist/
-npm run preview        # serves the built dashboard
-```
-
-For persistent hosting use [PM2](https://pm2.keymetrics.io):
-
-```bash
-npm install -g pm2
-pm2 start pm2.config.js
-pm2 save
-pm2 startup            # enable autostart on reboot
-```
-
-The included `pm2.config.js` defines both the backend (`ai-trader`) and dashboard (`ai-trader-dashboard`) processes.
-
----
-
-## Deploying to a Raspberry Pi (headless kiosk)
-
-These steps work for any Node.js + PM2 project on a Pi. Tested on **Raspberry Pi 5, Raspberry OS (64-bit), Wayland/labwc**.
-
-### Prerequisites on the Pi
-
-```bash
-# Node.js 20 (via NodeSource)
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# PM2
-sudo npm install -g pm2
-
-# Chromium (for kiosk display)
-sudo apt-get install -y chromium
-```
-
-### First-time deployment
-
-From your dev machine (Windows/Mac/Linux):
-
-```bash
-# 1. Bundle source (exclude secrets and build artifacts)
-tar -czf /tmp/tb.tar.gz \
-  --exclude="Trading Bot/node_modules" \
-  --exclude="Trading Bot/dist" \
-  --exclude="Trading Bot/.git" \
-  --exclude="Trading Bot/.env" \
-  "Trading Bot"
-
-# 2. Push to Pi
-scp /tmp/tb.tar.gz pi@raspberrypi.local:~/
-ssh pi@raspberrypi.local "tar -xzf tb.tar.gz && mv 'Trading Bot' trading-bot && rm tb.tar.gz"
-
-# 3. Push .env separately (never bundle secrets)
-scp "Trading Bot/.env" pi@raspberrypi.local:~/trading-bot/.env
-
-# 4. Install, build, start
-ssh pi@raspberrypi.local "cd ~/trading-bot && npm install && npm run build && pm2 start pm2.config.js && pm2 save"
-```
-
-### Incremental updates (source file changes only)
-
-```bash
-# Bundle only changed source files
-tar -czf /tmp/tb-src.tar.gz \
-  "Trading Bot/src/path/to/changed.ts" \
-  "Trading Bot/src/other/file.ts"
-
-scp /tmp/tb-src.tar.gz pi@raspberrypi.local:~/
-ssh pi@raspberrypi.local "tar -xzf tb-src.tar.gz --strip-components=1 -C ~/trading-bot/ && rm tb-src.tar.gz"
-
-# Rebuild and restart
-ssh pi@raspberrypi.local "cd ~/trading-bot && npm run build && pm2 restart ai-trader"
-```
-
-### Kiosk display (Wayland)
-
-The included `launch-dashboard.sh` opens Chromium in full-screen kiosk mode and is wired to autostart via `~/.config/autostart/trading-dashboard.desktop`.
-
-Key flags for Wayland (labwc) on Pi:
-```bash
-WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000 \
-  chromium --ozone-platform=wayland \
-  --kiosk \
-  --noerrdialogs \
-  --disable-infobars \
-  --no-first-run \
-  http://localhost:5173
-```
-
-> **Note:** Use `--kiosk` not `--start-fullscreen`. On labwc, `--start-fullscreen` is unreliable; `--kiosk` gives true borderless fullscreen consistently. The binary is `chromium`, not `chromium-browser`.
-
-### Useful Pi commands
-
-```bash
-# Check running processes
-ssh pi@raspberrypi.local "pm2 status"
-
-# Tail logs
-ssh pi@raspberrypi.local "pm2 logs ai-trader --lines 50 --nostream"
-
-# Restart bot only (no rebuild)
-ssh pi@raspberrypi.local "pm2 restart ai-trader"
-
-# Reload PM2 config (after pm2.config.js changes)
-ssh pi@raspberrypi.local "pm2 reload pm2.config.js && pm2 save"
-
-# Health check
-ssh pi@raspberrypi.local "curl -s http://localhost:3001/api/health"
-
-# Reboot Pi
-ssh pi@raspberrypi.local "sudo reboot"
-```
-
-### Gotchas
-
-| Issue | Fix |
-|-------|-----|
-| `sudo` via SSH leaks Windows PATH | Use full path: `sudo /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` |
-| PM2 script fails for dashboard | Use `script: 'npm'` + `args: 'run preview -- --host'`, not `script: 'vite'` |
-| Dashboard blocked in browser | Add `preview: { allowedHosts: ['raspberrypi.local', 'localhost'] }` to `vite.config.ts` |
-| API proxy 502 in dashboard | Set `API_PORT: '3001'` in PM2 env for the dashboard process (matches `PORT` in backend) |
-| Chromium not fullscreen | Use `--kiosk` not `--start-fullscreen`; Pi uses Wayland not X11 |
-
----
-
-## Commands Reference
-
-| Command | Where | What it does |
-|---------|-------|-------------|
-| `npm run dev` | root | Start bot with auto-reload (tsx watch) |
-| `npm run build` | root | Compile TypeScript → `dist/` |
-| `npm start` | root | Run compiled build |
-| `npm run seed` | root | Seed watchlist with default stocks |
-| `npm run dev` | `dashboard/` | Start dashboard Vite dev server |
-| `npm run build` | `dashboard/` | Production build of dashboard → `dashboard/dist/` |
-| `npm run preview` | `dashboard/` | Serve production build locally |
-
----
+See `.env.example` for every variable. The env values are defaults; the playbook may tighten the tunable ones at runtime (bounded by `TUNABLE_BOUNDS`), and the dashboard's Learning → Playbook tab shows the current effective values.
 
 ## License
 
-Released under the [MIT License](LICENSE).
+MIT — see [LICENSE](LICENSE).

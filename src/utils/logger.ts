@@ -21,6 +21,9 @@ class ActivityLogTransport extends Transport {
   }
 }
 
+// LOG_DIR lets a release-based deploy keep logs outside the release directory.
+const LOG_DIR = process.env.LOG_DIR || path.resolve(__dirname, '../../logs');
+
 const logFormat = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   winston.format.errors({ stack: true }),
@@ -44,13 +47,13 @@ const logger = winston.createLogger({
       ),
     }),
     new winston.transports.File({
-      filename: path.resolve(__dirname, '../../logs/error.log'),
+      filename: path.join(LOG_DIR, 'error.log'),
       level: 'error',
       maxsize: 5 * 1024 * 1024, // 5MB
       maxFiles: 5,
     }),
     new winston.transports.File({
-      filename: path.resolve(__dirname, '../../logs/combined.log'),
+      filename: path.join(LOG_DIR, 'combined.log'),
       maxsize: 10 * 1024 * 1024, // 10MB
       maxFiles: 10,
     }),

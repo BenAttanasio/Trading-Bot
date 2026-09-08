@@ -1,8 +1,8 @@
 import { getNews } from '../../alpaca/news';
 import { getSnapshots, getBars, calculateVolumeAverage } from '../../alpaca/market-data';
-import { callAIJson, BudgetExceededError } from '../../ai/client';
+import { callAIStructured, BudgetExceededError } from '../../ai/client';
 import { SENTINEL_SYSTEM_PROMPT, buildSentinelEvaluatePrompt } from '../../ai/prompts/sentinel-evaluate';
-import { parseSentinelEvaluation, SentinelEvaluation } from '../../ai/parser';
+import { SentinelEvaluationSchema, normalizeSentinelEvaluation, SentinelEvaluation } from '../../ai/schemas';
 import { getActiveWatchlist, insertAlert } from '../../db/queries';
 import { Alert } from '../../db/models/alert';
 import { handleSentinelEscalation } from '../../../engine/orchestrator';
@@ -209,7 +209,8 @@ async function evaluateNewsItem(
   summary: string,
   currentPrice: number
 ): Promise<SentinelEvaluation> {
-  const aiResponse = await callAIJson<Record<string, unknown>>({
+  const parsed = await callAIStructured({
+    schema: SentinelEvaluationSchema,
     systemPrompt: SENTINEL_SYSTEM_PROMPT,
     userPrompt: buildSentinelEvaluatePrompt({
       symbol,
@@ -218,9 +219,9 @@ async function evaluateNewsItem(
       currentPrice,
     }),
     model: 'budget',
-    maxTokens: 512,
     budgetSensitive: true,
+    purpose: `sentinel ${symbol}`,
   });
 
-  return parseSentinelEvaluation(aiResponse);
+  return normalizeSentinelEvaluation(parsed);
 }

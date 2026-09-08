@@ -1,32 +1,82 @@
 @import "tailwindcss";
+@import "@fontsource-variable/jetbrains-mono";
 
+/* ----------------------------------------------------------------------------
+   Design tokens — shared with the Unified Dashboard so both read as one system:
+   near-black ground, barely-raised tiles, green labels, coral reserved for
+   badges, neutral numbers that turn red only when the metric is down.
+---------------------------------------------------------------------------- */
 :root {
-  --bg-primary: #0f1117;
-  --bg-secondary: #1a1d28;
-  --bg-card: #1e2130;
-  --bg-hover: #262a3d;
-  --text-primary: #e4e6f0;
-  --text-secondary: #8b8fa3;
-  --text-muted: #5a5e73;
-  --border: #2a2e42;
-  --accent-green: #00d68f;
-  --accent-red: #ff4d6a;
-  --accent-blue: #3366ff;
-  --accent-yellow: #ffaa00;
-  --accent-purple: #9b59b6;
+  --bg: #08090a;
+  --surface: #111418;
+  --divider: #262b31;
+
+  --primary: #f0736a; /* coral — badges/row tints, never a metric value */
+  --accent: #7ec46f;  /* green — section titles, labels, icons */
+  --text: #e6edf3;
+  --muted: #8b949e;
+
+  --ok: #3fb950;
+  --warn: #d29922;
+  --crit: #f85149;
+  --info: #58a6ff;
+
+  --font-num: 'JetBrains Mono Variable', ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+
+  /* Aliases kept for existing components */
+  --bg-primary: var(--bg);
+  --bg-secondary: var(--surface);
+  --bg-card: var(--surface);
+  --bg-hover: #181c22;
+  --text-primary: var(--text);
+  --text-secondary: #b6c0ca;
+  --text-muted: var(--muted);
+  --border: var(--divider);
+  --accent-green: var(--ok);
+  --accent-red: var(--crit);
+  --accent-blue: var(--info);
+  --accent-yellow: var(--warn);
+  --accent-purple: #b083f0;
 }
 
 html {
-  font-size: 15px;
+  font-size: 14px;
 }
 
 body {
   margin: 0;
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Section title grammar (matches .section-title in the Unified Dashboard) */
+.section-title {
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.chart-hint {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.tile {
+  background: var(--surface);
+  border-radius: 0.6rem;
+  padding: 1rem 1.1rem;
+}
+
+.badge-coral {
+  background: rgba(240, 115, 106, 0.16);
+  color: var(--primary);
 }
 
 ::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: var(--bg-primary); }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--divider); border-radius: 3px; }

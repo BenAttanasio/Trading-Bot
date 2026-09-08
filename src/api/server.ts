@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
 import { env } from '../config/env';
 import { portfolioRouter } from './routes/portfolio';
 import { tradesRouter } from './routes/trades';
@@ -10,9 +12,18 @@ import { watchlistRouter } from './routes/watchlist';
 import { dashboardRouter } from './routes/dashboard';
 import { activityRouter } from './routes/activity';
 import { outcomesRouter } from './routes/outcomes';
+import { summaryRouter } from './routes/summary';
+import { learningRouter } from './routes/learning';
+import { adminRouter } from './routes/admin';
 import { createServiceLogger } from '../utils/logger';
 
 const log = createServiceLogger('API');
+
+/** Where the built React dashboard lives. Overridable so releases can point at their own copy. */
+export function resolveDashboardDist(): string | null {
+  const candidate = env.DASHBOARD_DIST || path.resolve(__dirname, '../../dashboard/dist');
+  return fs.existsSync(path.join(candidate, 'index.html')) ? candidate : null;
+}
 
 export function createServer(): express.Express {
   const app = express();
@@ -24,6 +35,7 @@ export function createServer(): express.Express {
   app.get('/api/health', (req, res) => {
     res.json({
       status: 'ok',
+      mode: env.isPaper ? 'paper' : 'live',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
     });
@@ -39,31 +51,42 @@ export function createServer(): express.Express {
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/activity', activityRouter);
   app.use('/api/outcomes', outcomesRouter);
+  app.use('/api/summary', summaryRouter);
+  app.use('/api/learning', learningRouter);
+  app.use('/api/admin', adminRouter);
+
+  app.use('/api', (req, res) => {
+    res.status(404).json({ error: `No such endpoint: ${req.method} ${req.path}` });
+  });
+
+  // Static dashboard (single-process deploy). Anything that isn't /api falls back to index.html.
+  const dist = resolveDashboardDist();
+  if (dist) {
+    app.use(express.static(dist, { index: 'index.html', maxAge: '1h' }));
+    app.get(/^(?!\/api\/).*/, (req, res) => {
+      res.sendFile(path.join(dist, 'index.html'));
+    });
+    log.info(`Serving dashboard from ${dist}`);
+  } else {
+    log.warn('No built dashboard found — API only. Run `npm run build` in dashboard/ or set DASHBOARD_DIST.');
+  }
 
   return app;
 }
 
-export function startServer(maxRetries = 10): void {
+export function startServer(): void {
   const app = createServer();
-  let port = env.PORT;
-  let attempt = 0;
+  const server = app.listen(env.PORT, '0.0.0.0', () => {
+    log.info(`API + dashboard listening on http://0.0.0.0:${env.PORT}`);
+  });
 
-  function tryListen(): void {
-    const server = app.listen(port, () => {
-      log.info(`API server running on port ${port}`);
-    });
-
-    server.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE' && attempt < maxRetries) {
-        attempt++;
-        port++;
-        log.info(`Port ${port - 1} in use, trying port ${port}...`);
-        tryListen();
-      } else {
-        throw err;
-      }
-    });
-  }
-
-  tryListen();
+  // Fail loudly: a silently shifted port is how the dashboard used to 502.
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      log.error(`Port ${env.PORT} is already in use — refusing to start on a different port. Stop the other process or change PORT.`);
+    } else {
+      log.error('HTTP server error', { error: err.message });
+    }
+    process.exit(1);
+  });
 }

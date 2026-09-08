@@ -5,6 +5,7 @@ import { evaluateRisk, RiskCheckResult } from './risk-manager';
 import { insertDecisionLog } from '../services/db/queries';
 import { DecisionLog } from '../services/db/models/decision-log';
 import { isRegularHours } from '../services/scheduler/market-hours';
+import { getBotState, setBotState } from '../services/db/bot-state';
 import { createServiceLogger } from '../utils/logger';
 
 const log = createServiceLogger('Execution');
@@ -22,6 +23,8 @@ export interface ExecutionRequest {
     volume: number;
     changePercent: number;
   };
+  /** Extra structured AI output (thesis, prediction, exit conditions) kept in the decision log. */
+  aiExtras?: Record<string, unknown>;
 }
 
 export interface ExecutionResult {
@@ -32,17 +35,27 @@ export interface ExecutionResult {
   blockedReason?: string;
 }
 
-// Global kill switch
+// Global kill switch — mirrored to bot_state so a restart cannot silently resume trading
 let tradingPaused = false;
+const PAUSED_KEY = 'tradingPaused';
 
-export function pauseTrading(): void {
-  tradingPaused = true;
-  log.warn('TRADING PAUSED — kill switch activated');
+/** Call once after the DB is connected. */
+export async function loadTradingState(): Promise<void> {
+  const saved = await getBotState<boolean>(PAUSED_KEY);
+  tradingPaused = saved === true;
+  if (tradingPaused) log.warn('Restored kill switch state: TRADING PAUSED');
 }
 
-export function resumeTrading(): void {
+export async function pauseTrading(): Promise<void> {
+  tradingPaused = true;
+  log.warn('TRADING PAUSED — kill switch activated');
+  await setBotState(PAUSED_KEY, true);
+}
+
+export async function resumeTrading(): Promise<void> {
   tradingPaused = false;
   log.info('TRADING RESUMED');
+  await setBotState(PAUSED_KEY, false);
 }
 
 export function isTradingPaused(): boolean {
@@ -197,6 +210,7 @@ async function logDecision(
     aiResponse: {
       reasoning: request.aiReasoning,
       conviction: request.aiConviction,
+      ...(request.aiExtras ?? {}),
     },
     marketDataSnapshot: request.marketDataSnapshot || {
       price: 0,
