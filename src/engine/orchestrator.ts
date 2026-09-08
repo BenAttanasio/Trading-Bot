@@ -1,6 +1,7 @@
 import { runPortfolioReview } from './portfolio-manager';
 import { runMorningResearch, researchAndTrade, runIntradayScouting } from './scout';
 import { isTradingPaused } from './execution';
+import { runStopGuard } from './stop-guard';
 import { createServiceLogger } from '../utils/logger';
 
 const log = createServiceLogger('Orchestrator');
@@ -26,7 +27,8 @@ export async function runMorningCycle(): Promise<void> {
   cycleRunning = true;
   log.info('═══ MORNING RESEARCH CYCLE ═══');
   try {
-    // First, review existing positions
+    // Code-enforced exits first, then review what is left
+    await runStopGuard();
     await runPortfolioReview();
 
     // Then, scout for new opportunities
@@ -53,6 +55,7 @@ export async function runIntradayPulse(): Promise<void> {
   cycleRunning = true;
   log.info('─── INTRADAY PULSE ───');
   try {
+    await runStopGuard();
     await runPortfolioReview();
     await runIntradayScouting();
     log.info('─── PULSE COMPLETE ───');

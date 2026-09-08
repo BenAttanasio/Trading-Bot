@@ -139,6 +139,143 @@ export function ProgressPanel() {
   );
 }
 
+// ─── Edge: the numbers a quant asks for first ───────────
+
+function num(n: number | null | undefined, digits = 2, suffix = ''): string {
+  if (n == null || !Number.isFinite(n)) return n === Infinity ? '∞' : '—';
+  return `${n.toFixed(digits)}${suffix}`;
+}
+
+function usd(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return `$${n.toFixed(2)}`;
+}
+
+export function EdgePanel() {
+  const fetcher = useCallback(() => api.getLearningStats(), []);
+  const { data } = usePolling<any>(fetcher, 10 * 60 * 1000);
+  if (!data) return <div className="tile text-[var(--muted)]">Loading stats…</div>;
+
+  const t = data.trades ?? {};
+  const e = data.equity ?? {};
+  const c = data.aiCost ?? {};
+  const cal = data.calibration ?? {};
+  const costPct = c.annualizedPctOfEquity;
+  const costHigh = costPct != null && costPct > 1;
+
+  const groups = (rec: Record<string, any> | undefined, label: string) => (
+    <div className="tile">
+      <div className="section-title mb-2">{label}</div>
+      {!rec || Object.keys(rec).length === 0 ? (
+        <div className="chart-hint">Nothing closed yet.</div>
+      ) : (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[var(--accent)] text-[0.66rem] uppercase tracking-[0.14em]">
+              <th className="text-left py-1 font-semibold">group</th>
+              <th className="text-right py-1 font-semibold">n</th>
+              <th className="text-right py-1 font-semibold">win</th>
+              <th className="text-right py-1 font-semibold">avg</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(rec).map(([k, g]: [string, any]) => (
+              <tr key={k} className="border-t border-[var(--divider)]">
+                <td className="py-1">{k.replace(/_/g, ' ')}</td>
+                <td className="py-1 text-right">{g.n}</td>
+                <td className="py-1 text-right">{g.winRate == null ? '—' : Math.round(g.winRate * 100) + '%'}</td>
+                <td className={`py-1 text-right font-semibold ${(g.avgPLPct ?? 0) < 0 ? 'text-[var(--crit)]' : ''}`}>{pct(g.avgPLPct)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Tile label="Expectancy / trade" value={pct(t.expectancyPct)} hint={t.n ? `n=${t.n} closed · win ${Math.round((t.winRate ?? 0) * 100)}%` : 'no closed trades yet'} down={(t.expectancyPct ?? 0) < 0} />
+        <Tile label="Profit factor" value={num(t.profitFactor)} hint={t.n ? `avg win ${pct(t.avgWinPct)} · avg loss ${pct(t.avgLossPct)}` : 'gross profit ÷ gross loss'} down={t.profitFactor != null && t.profitFactor < 1} />
+        <Tile label="Sharpe (ann.)" value={num(e.sharpe)} hint={e.days ? `${e.days} sessions · daily vol ${num(e.dailyVolPct, 2, '%')}` : 'needs 5+ sessions'} down={e.sharpe != null && e.sharpe < 0} />
+        <Tile label="Max drawdown" value={e.maxDrawdownPct == null ? '—' : `-${num(e.maxDrawdownPct, 2, '%')}`} hint={e.cagrPct != null ? `CAGR ${pct(e.cagrPct)}` : 'peak to trough'} down={(e.maxDrawdownPct ?? 0) > 5} />
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Tile label="AI cost today" value={usd(c.todayUsd)} hint={`${data.todayCalls ?? 0} calls · ${data.models?.deep ?? ''}`} />
+        <Tile label="AI cost / day" value={usd(c.avgPerTradingDayUsd)} hint={c.daysWithData ? `${c.daysWithData}-day average` : 'from tonight’s EOD summary'} />
+        <Tile label="AI cost / equity" value={costPct == null ? '—' : `${num(costPct, 2, '%')} /yr`} hint={costHigh ? 'above 1%: AI spend is eating the edge' : 'annualized list price'} down={costHigh} />
+        <Tile label="Tuning gate" value={data.gates?.tuningLive ? 'LIVE' : 'GATED'} hint={`${cal.n ?? 0} / ${data.gates?.minScoredForTuning ?? '?'} scored predictions`} down={!data.gates?.tuningLive} />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {groups(t.byTrigger, 'By entry trigger')}
+        {groups(t.byExitReason, 'By exit reason')}
+        {groups(t.bySide, 'By side')}
+      </div>
+      <div className="chart-hint">
+        Expectancy and profit factor need ~30+ closed trades before they mean anything. Until the tuning gate is live, the weekly review may propose parameter changes but they are not applied.
+      </div>
+    </div>
+  );
+}
+
+// ─── Ranking: this morning's slate ───────────────────────
+
+export function RankingPanel() {
+  const fetcher = useCallback(() => api.getLatestRanking(), []);
+  const { data } = usePolling<any>(fetcher, 10 * 60 * 1000);
+  if (!data) return <div className="tile text-[var(--muted)]">Loading ranking…</div>;
+  const r = data.ranking;
+  if (!r) return <div className="tile chart-hint">No ranking yet — the morning cycle ranks the universe once at 9:35 ET.</div>;
+  const rows = [...(r.candidates ?? [])].sort((a: any, b: any) => b.score - a.score);
+  const regimeCls = r.regime === 'risk_on' ? 'text-[var(--ok)]' : r.regime === 'risk_off' ? 'text-[var(--crit)]' : 'text-[var(--warn)]';
+
+  return (
+    <div className="space-y-4">
+      <div className="tile">
+        <div className="flex items-baseline gap-3 mb-1">
+          <div className="section-title">Ranking {r.date}</div>
+          <span className={`text-[0.66rem] font-bold uppercase tracking-[0.14em] ${regimeCls}`}>{String(r.regime).replace('_', ' ')}</span>
+          <span className="chart-hint">{r.universeSize} names · {r.modelUsed}</span>
+        </div>
+        <p className="text-sm text-[var(--text-secondary)]">{r.marketRead}</p>
+      </div>
+      <div className="tile !p-0 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-[var(--accent)] text-[0.66rem] uppercase tracking-[0.14em] border-b border-[var(--divider)]">
+                <th className="text-left p-3 font-semibold">symbol</th>
+                <th className="text-right p-3 font-semibold">score</th>
+                <th className="text-left p-3 font-semibold">side</th>
+                <th className="text-right p-3 font-semibold">conv</th>
+                <th className="text-right p-3 font-semibold">conf</th>
+                <th className="text-right p-3 font-semibold">horizon</th>
+                <th className="text-right p-3 font-semibold">stop / target</th>
+                <th className="text-left p-3 font-semibold">thesis</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((c: any) => (
+                <tr key={c.symbol} className="border-b border-[var(--divider)]">
+                  <td className="p-3 font-bold">{c.symbol}</td>
+                  <td className={`p-3 text-right font-semibold ${c.score > 0 ? 'text-[var(--ok)]' : c.score < 0 ? 'text-[var(--crit)]' : 'text-[var(--muted)]'}`}>{c.score > 0 ? '+' : ''}{c.score}</td>
+                  <td className="p-3">{c.side === 'none' ? <span className="chart-hint">—</span> : <span className={`text-[0.62rem] font-bold tracking-[0.12em] px-1.5 rounded ${c.side === 'long' ? 'bg-[rgba(63,185,80,0.16)] text-[var(--ok)]' : 'bg-[rgba(248,81,73,0.16)] text-[var(--crit)]'}`}>{c.side.toUpperCase()}</span>}</td>
+                  <td className="p-3 text-right">{c.conviction}</td>
+                  <td className="p-3 text-right">{Math.round(c.confidence * 100)}%</td>
+                  <td className="p-3 text-right">{c.horizonDays}d</td>
+                  <td className="p-3 text-right text-xs tabular-nums">{c.invalidationPrice != null ? `$${c.invalidationPrice}` : '—'} / {c.targetPrice != null ? `$${c.targetPrice}` : '—'}</td>
+                  <td className="p-3 text-[var(--text-secondary)] max-w-[420px]" title={[...(c.catalysts ?? []), ...(c.risks ?? [])].join(' · ')}>{c.summary}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Reflections ─────────────────────────────────────────
 
 export function ReflectionsPanel() {
@@ -353,11 +490,11 @@ export function ChangelogPanel() {
 }
 
 export function LearningTab() {
-  const [sub, setSub] = useState<'progress' | 'reflections' | 'playbook' | 'changelog'>('progress');
+  const [sub, setSub] = useState<'progress' | 'edge' | 'ranking' | 'reflections' | 'playbook' | 'changelog'>('progress');
   return (
     <div className="p-5 space-y-4 max-w-7xl mx-auto">
       <div className="flex gap-1">
-        {(['progress', 'reflections', 'playbook', 'changelog'] as const).map((s) => (
+        {(['progress', 'edge', 'ranking', 'reflections', 'playbook', 'changelog'] as const).map((s) => (
           <button
             key={s}
             onClick={() => setSub(s)}
@@ -368,6 +505,8 @@ export function LearningTab() {
         ))}
       </div>
       {sub === 'progress' && <ProgressPanel />}
+      {sub === 'edge' && <EdgePanel />}
+      {sub === 'ranking' && <RankingPanel />}
       {sub === 'reflections' && <ReflectionsPanel />}
       {sub === 'playbook' && <PlaybookPanel />}
       {sub === 'changelog' && <ChangelogPanel />}

@@ -10,15 +10,34 @@ It ships with a dashboard and a compact `/api/summary` other dashboards can read
 
 | Workflow | When (ET) | What it does |
 |---|---|---|
-| **Morning research** | 9:35 Mon–Fri | Opus 5 researches each watchlist symbol; Sonnet 5 decides; top-conviction buys are placed |
-| **Intraday pulse** | every 30 min, 4:00–19:59 | Reviews held positions; scouts two unheld watchlist symbols with Haiku 4.5 |
-| **Sentinel** | every 60 s during extended hours | Triages news and price spikes; urgency ≥ 7 escalates to immediate research |
+| **Morning ranking** | 9:35 Mon–Fri | Builds the universe (watchlist + Alpaca movers/most-actives screener), gathers bars/news/ATR for every name plus SPY/QQQ/sector-ETF context, and asks Sonnet 5 for **one cross-sectional ranking**. The top longs (and shorts, if enabled) get a per-name decision, a volatility-scaled size, and code-enforced stop/target/time-stop |
+| **Stop guard** | every 60 s during extended hours | No model in the loop: closes any position that crosses its stop or target, breaks its trailing floor, or outlives its horizon |
+| **Intraday pulse** | every 30 min, 4:00–19:59 | Reviews held positions (reviews may only *tighten* stops); scouts only names the sentinel queued since the last pulse, with Haiku 4.5 |
+| **Sentinel** | every 60 s during extended hours | Triages news and price spikes; urgency ≥ 7 escalates to immediate research, 4–6 is queued for the pulse |
 | **EOD summary + benchmark** | 16:05 Mon–Fri | Daily summary; records equity next to SPY's close |
 | **Nightly reflection** | 19:00 Mon–Fri | Scores due predictions, judges closed trades (thesis right / wrong / right for the wrong reason / timing), appends lessons to the playbook |
-| **Weekly deep review** | Sunday 10:00 | Opus 5 with web search rewrites the playbook, tunes parameters (within hard bounds), files code change requests |
+| **Weekly deep review** | Sunday 10:00 | Sonnet 5 (deep tier) with web search rewrites the playbook. Parameter changes and code change requests are applied only once `MIN_SCORED_FOR_TUNING` predictions have been scored — before that they are recorded as proposals |
 | **Self-improve** | Sunday 11:30 + weekday evenings | Implements change requests with Claude Code in a git worktree, verifies, auto-merges/deploys or waits for approval |
 
 Every decision, including HOLD and PASS, is logged with the AI's reasoning, conviction, and a market snapshot. Every BUY and PASS also records a prediction (direction, expected move, horizon, invalidation, confidence) that is scored later, so the bot's calibration is measured, not assumed.
+
+### Models and cost
+
+Model per tier comes from env (`AI_BUDGET_MODEL`, `AI_FAST_MODEL`, `AI_DEEP_MODEL`). The defaults use **Haiku 4.5** for triage and **Sonnet 5** for everything else, including the "deep" tier (same model, higher effort). Opus is opt-in. Every response's usage is priced at list and accumulated per day; the Learning → Edge tab shows AI cost per day and annualized as a percentage of equity, which has to stay far below any plausible edge.
+
+### Sizing and exits
+
+Position size is `equity × RISK_PER_TRADE_PERCENT × calibration multiplier ÷ stop distance`, capped by `MAX_POSITION_SIZE_DOLLARS` and the hard 25%-of-equity ceiling. The stop is the decision's invalidation price when it is sane, otherwise `atrStopMultiple × ATR(14)`. The calibration multiplier is 1 until `MIN_SCORED_FOR_TUNING` predictions are scored, then scales with the measured hit rate (bounded 0.25–1.5). Stops, targets and time stops are stored on the position and enforced in code by the stop guard; an AI review may tighten a stop but never loosen it. Shorts are off by default (`ENABLE_SHORTS=0`); when on, they require whole shares and easy-to-borrow names.
+
+### Replay (offline evidence before capital)
+
+```bash
+npm run replay -- --from 2026-06-01 --to 2026-08-29            # Haiku, seed watchlist, top 5
+npm run replay -- --from 2026-07-01 --to 2026-08-29 --model fast --top 5 --shorts
+npm run replay -- --from 2026-07-01 --to 2026-08-29 --dry       # baseline only, no AI spend
+```
+
+The replay runs the **same** ranking prompt over past trading days using only bars and news that existed before each open, scores every side call at its horizon, and prints hit rate vs the always-up baseline, Brier, calibration buckets, hit rate by |score|, and a top-k long basket vs SPY. Reports land in `replay-results/` (git-ignored). Until the replay beats the baseline over a few hundred calls, treat live paper results as noise.
 
 ### Safety model
 
@@ -54,11 +73,13 @@ cd dashboard && npm run dev   # dashboard dev server on :5173 (proxies /api)
 | `GET /api/summary` | compact snapshot for external dashboards |
 | `GET /api/dashboard` | everything the bundled dashboard needs |
 | `GET /api/learning/progress` | equity vs SPY, calibration, recent predictions |
+| `GET /api/learning/stats` | expectancy, profit factor, Sharpe, max drawdown, AI cost vs equity, tuning gate |
+| `GET /api/learning/ranking` | the latest morning ranking snapshot |
 | `GET /api/learning/reflections` | nightly and weekly reflections |
 | `GET /api/learning/playbook` | current playbook, tuned params, version history |
 | `GET /api/learning/change-requests` | self-modification queue |
 | `POST /api/config/pause` / `resume` | kill switch |
-| `POST /api/admin/jobs/:name` | run a job now (`morning`, `pulse`, `eod`, `score-predictions`, `nightly-reflection`, `weekly-review`, `self-improve`) |
+| `POST /api/admin/jobs/:name` | run a job now (`morning`, `pulse`, `eod`, `stop-guard`, `score-predictions`, `nightly-reflection`, `weekly-review`, `self-improve`) |
 | `POST /api/admin/change-requests` (+ `/:id/approve`, `/:id/reject`) | file / approve / reject change requests |
 
 Admin routes accept requests from the box itself or a private LAN address; from anywhere else they need the `x-admin-token` header matching `ADMIN_TOKEN`.

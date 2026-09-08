@@ -8,11 +8,12 @@ ${buildRulesBlock()}
 
 ${DATA_GAPS_NOTE}
 
-Whether you BUY or PASS you also make a falsifiable prediction (direction, size of move, horizon, what would invalidate it). Predictions are scored later — including the ones you passed on — so calibrate: a 0.9 confidence should be right about nine times in ten.`;
+Whether you BUY or PASS you also make a falsifiable prediction (direction, size of move, horizon, what would invalidate it). Predictions are scored later — including the ones you passed on — so calibrate: a 0.9 confidence should be right about nine times in ten. For a short, the prediction direction is "down".`;
 }
 
 export function buildPositionReviewPrompt(params: {
   symbol: string;
+  side: 'long' | 'short';
   entryPrice: number;
   currentPrice: number;
   plPercent: number;
@@ -22,13 +23,23 @@ export function buildPositionReviewPrompt(params: {
   rsi: number;
   volumeVsAvg: number;
   sectorPerformance: string;
+  stopPrice?: number | null;
+  targetPrice?: number | null;
+  timeStopAt?: Date | null;
+  marketContext?: string;
 }): string {
   const newsBlock = params.recentNews
     .map((n) => `  - [${n.date}] ${n.headline}`)
     .join('\n');
+  const guard = [
+    params.stopPrice != null ? `stop $${params.stopPrice.toFixed(2)}` : 'no hard stop',
+    params.targetPrice != null ? `target $${params.targetPrice.toFixed(2)}` : 'no target',
+    params.timeStopAt ? `time stop ${params.timeStopAt.toISOString().slice(0, 10)}` : 'no time stop',
+  ].join(', ');
 
-  return `CURRENT POSITION: ${params.symbol} — bought at $${params.entryPrice.toFixed(2)}, now $${params.currentPrice.toFixed(2)}, held ${params.daysHeld} days, ${params.plPercent >= 0 ? 'up' : 'down'} ${Math.abs(params.plPercent).toFixed(2)}%
+  return `CURRENT POSITION: ${params.side.toUpperCase()} ${params.symbol} — entered at $${params.entryPrice.toFixed(2)}, now $${params.currentPrice.toFixed(2)}, held ${params.daysHeld} days, ${params.plPercent >= 0 ? 'up' : 'down'} ${Math.abs(params.plPercent).toFixed(2)}%
 ORIGINAL THESIS: "${params.originalThesis}"
+CODE-ENFORCED EXITS: ${guard} (these fire without you; you may only tighten the stop)
 
 LATEST DATA:
 - RSI(14): ${params.rsi.toFixed(1)}
@@ -36,22 +47,30 @@ LATEST DATA:
 - Sector: ${params.sectorPerformance}
 - News:
 ${newsBlock || '  No significant recent news'}
-
-Decide: HOLD, TRIM (sell half), EXIT, or ADD. Update the thesis only if the facts changed.`;
+${params.marketContext ? `\n${params.marketContext}\n` : ''}
+Decide: HOLD, TRIM (close half), EXIT, or ADD. Update the thesis only if the facts changed. If the facts argue for less risk but not an exit, propose a tighter stop.`;
 }
 
 export function buildNewTradeDecisionPrompt(params: {
   symbol: string;
   sector: string;
+  side: 'long' | 'short';
   currentPrice: number;
   researchSummary: string;
   conviction: number;
   catalysts: string[];
   risks: string[];
+  proposedStop: number | null;
+  proposedTarget: number | null;
+  horizonDays: number | null;
   rsi: number | null;
   sma20: number | null;
+  atr: number | null;
+  atrPct: number | null;
   volumeVsAvg: number | null;
+  change1dPct: number | null;
   portfolioContext: string;
+  marketContext?: string;
   availableData?: string[];
   missingData?: string[];
 }): string {
@@ -63,10 +82,11 @@ DATA AVAILABILITY:
 - Missing: ${(params.missingData || []).join(', ') || 'none'}
 ` : '';
 
-  return `NEW TRADE OPPORTUNITY: ${params.symbol}${params.sector ? ` (${params.sector})` : ''}
+  return `NEW TRADE CANDIDATE: ${params.side.toUpperCase()} ${params.symbol}${params.sector ? ` (${params.sector})` : ''}
 
 RESEARCH SUMMARY: ${params.researchSummary}
 RESEARCH CONVICTION: ${params.conviction}/10
+PROPOSED BY RESEARCH: stop ${params.proposedStop == null ? 'n/a' : '$' + params.proposedStop.toFixed(2)}, target ${params.proposedTarget == null ? 'n/a' : '$' + params.proposedTarget.toFixed(2)}, horizon ${params.horizonDays ?? 'n/a'} trading days
 
 CATALYSTS:
 ${params.catalysts.map((c) => `  - ${c}`).join('\n') || '  (none listed)'}
@@ -75,12 +95,13 @@ RISKS:
 ${params.risks.map((r) => `  - ${r}`).join('\n') || '  (none listed)'}
 
 MARKET DATA:
-- Current Price: $${params.currentPrice.toFixed(2)}
+- Current Price: $${params.currentPrice.toFixed(2)} (today ${fmtOpt(params.change1dPct, (v) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`)})
 - RSI(14): ${fmtOpt(params.rsi, (v) => v.toFixed(1))}
 - 20-Day SMA: ${fmtOpt(params.sma20, (v) => `$${v.toFixed(2)}`)}
+- ATR(14): ${fmtOpt(params.atr, (v) => `$${v.toFixed(2)}`)} (${fmtOpt(params.atrPct, (v) => `${v.toFixed(1)}% of price`)})
 - Volume: ${fmtOpt(params.volumeVsAvg, (v) => `${v.toFixed(1)}x average`)}
-${dataAvailBlock}
+${dataAvailBlock}${params.marketContext ? `\n${params.marketContext}\n` : ''}
 PORTFOLIO CONTEXT: ${params.portfolioContext}
 
-Should we enter this trade? If BUY, size it in dollars within the rules and state the prediction you are willing to be judged on.`;
+Should we enter this ${params.side}? If BUY, give the stop price (losing side, within 15%; a real level, roughly 1.5-3 ATR away), the target price, the horizon, and the prediction you are willing to be judged on. Code will size the position from the stop distance.`;
 }

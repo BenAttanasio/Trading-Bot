@@ -22,6 +22,7 @@ import { Reflection, ChangeRequest } from '../services/db/models/reflection';
 import { scoreDuePredictions, computeCalibration } from './predictions';
 import { getBenchmarkComparison } from './benchmark';
 import { getETDateISO, getStartOfETDay } from '../utils/time';
+import { env } from '../config/env';
 import { createServiceLogger } from '../utils/logger';
 import { notify } from '../services/notify';
 
@@ -168,6 +169,9 @@ export async function runWeeklyReview(): Promise<Reflection | null> {
 
     const calibration = computeCalibration(scored);
     const usage = getDailyTokenUsage();
+    // Sample-size gate: with too few scored predictions, parameter changes and code
+    // change requests are noise. The review still consolidates the playbook text.
+    const tuningGated = calibration.n < env.MIN_SCORED_FOR_TUNING;
 
     const parsed = await callAIStructured({
       schema: WeeklyReviewSchema,
@@ -182,6 +186,7 @@ export async function runWeeklyReview(): Promise<Reflection | null> {
         benchmark: { botReturnPct: benchmark.botReturnPct, spyReturnPct: benchmark.spyReturnPct, from: benchmark.from, to: benchmark.to },
         openPositions: positions.map((p) => ({ symbol: p.symbol, plPercent: p.unrealizedPLPercent, daysHeld: p.daysHeld, thesis: p.thesis })),
         tokenSpend: { total: usage.total, budget: usage.budget },
+        sampleGate: { minScored: env.MIN_SCORED_FOR_TUNING, gated: tuningGated },
       }),
       model: 'deep',
       effort: 'high',
@@ -191,8 +196,14 @@ export async function runWeeklyReview(): Promise<Reflection | null> {
       purpose: 'weekly-review',
     });
 
+    if (tuningGated && (parsed.paramChanges.length || parsed.changeRequests.length)) {
+      log.warn(`Weekly review proposed ${parsed.paramChanges.length} param changes and ${parsed.changeRequests.length} change requests, but only ${calibration.n}/${env.MIN_SCORED_FOR_TUNING} predictions are scored — not applied`);
+    }
+    const paramChanges = tuningGated ? [] : parsed.paramChanges;
+    const changeRequests = tuningGated ? [] : parsed.changeRequests;
+
     // Apply: playbook text + params (clamped inside updatePlaybook)
-    const params = Object.fromEntries(parsed.paramChanges.map((c) => [c.key, c.value]));
+    const params = Object.fromEntries(paramChanges.map((c) => [c.key, c.value]));
     const before = getPlaybook()?.version ?? null;
     const pb = await updatePlaybook({
       strategyMd: parsed.newStrategyMd,
@@ -209,8 +220,8 @@ export async function runWeeklyReview(): Promise<Reflection | null> {
       items: [],
       patterns: parsed.experimentsNextWeek,
       playbookSuggestions: [],
-      paramSuggestions: parsed.paramChanges,
-      changeRequests: parsed.changeRequests,
+      paramSuggestions: paramChanges,
+      changeRequests,
       playbookVersionAfter: pb.version,
       stats: {
         playbookVersionBefore: before,
@@ -219,13 +230,16 @@ export async function runWeeklyReview(): Promise<Reflection | null> {
         hitRate: calibration.hitRate,
         meanBrier: calibration.meanBrier,
         confidence: parsed.confidence,
+        scoredN: calibration.n,
+        tuningGated,
+        proposedButGated: tuningGated ? { paramChanges: parsed.paramChanges, changeRequests: parsed.changeRequests } : undefined,
       },
       modelUsed: MODEL_IDS.deep,
       createdAt: new Date(),
     };
     const reflectionId = await insertReflection(reflection);
 
-    for (const cr of parsed.changeRequests) {
+    for (const cr of changeRequests) {
       const doc: ChangeRequest = {
         ...cr,
         status: 'proposed',
@@ -239,11 +253,12 @@ export async function runWeeklyReview(): Promise<Reflection | null> {
     }
 
     await notify(`Weekly review ${today}`, `${parsed.headline}
-Playbook → v${pb.version}; ${parsed.paramChanges.length} param changes; ${parsed.changeRequests.length} change requests.`, 'info');
+Playbook → v${pb.version}; ${paramChanges.length} param changes; ${changeRequests.length} change requests${tuningGated ? ` (tuning gated: ${calibration.n}/${env.MIN_SCORED_FOR_TUNING} scored)` : ''}.`, 'info');
     log.info(`Weekly review stored: ${parsed.headline}`, {
       playbookVersion: pb.version,
-      paramChanges: parsed.paramChanges,
-      changeRequests: parsed.changeRequests.length,
+      paramChanges,
+      changeRequests: changeRequests.length,
+      tuningGated,
     });
     return { ...reflection, _id: reflectionId };
   } catch (error) {

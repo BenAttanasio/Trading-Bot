@@ -6,6 +6,7 @@ import { SentinelEvaluationSchema, normalizeSentinelEvaluation, SentinelEvaluati
 import { getActiveWatchlist, insertAlert } from '../../db/queries';
 import { Alert } from '../../db/models/alert';
 import { handleSentinelEscalation } from '../../../engine/orchestrator';
+import { runStopGuard } from '../../../engine/stop-guard';
 import { isExtendedHours } from '../market-hours';
 import { TRADING_RULES } from '../../../config/trading-rules';
 import { createServiceLogger } from '../../../utils/logger';
@@ -50,6 +51,9 @@ async function sentinelTick(): Promise<void> {
     // Only run during extended hours
     const inHours = await isExtendedHours();
     if (!inHours) return;
+
+    // Code-enforced stops / targets / time stops on held positions — no AI, every tick
+    await runStopGuard().catch((error) => log.error('Stop guard failed', { error }));
 
     const watchlist = await getActiveWatchlist();
     if (watchlist.length === 0) return;

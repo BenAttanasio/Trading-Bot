@@ -41,6 +41,10 @@ export const TUNABLE_BOUNDS = {
   trailingStopFloor: { min: 0, max: 99 },
   intradayPulseIntervalMinutes: { min: 5, max: 240 },
   positionReviewCooldownMinutes: { min: 5, max: 24 * 60 },
+  /** % of equity risked per trade between entry and stop (volatility-scaled sizing). */
+  riskPerTradePercent: { min: 0.1, max: 2 },
+  /** Stop distance in ATR(14) multiples when the decision gives no usable stop. */
+  atrStopMultiple: { min: 1, max: 4 },
 } as const satisfies Record<string, TunableBounds>;
 
 export type TunableKey = keyof typeof TUNABLE_BOUNDS;

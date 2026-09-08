@@ -19,6 +19,9 @@ export interface TradingRules {
   // Trailing stop
   trailingStopActivation: number;
   trailingStopFloor: number;
+  // Volatility-scaled sizing
+  riskPerTradePercent: number;
+  atrStopMultiple: number;
   // Sentinel thresholds
   sentinelPollIntervalSeconds: number;
   priceSpikeTriggerPercent: number;
@@ -56,6 +59,8 @@ const DEFAULTS: TradingRules = {
   maxSectorPercent: 40,         // no single sector > 40% of portfolio
   trailingStopActivation: 10,   // activate trailing stop when up 10%
   trailingStopFloor: 5,         // trailing stop floor at 5% gain
+  riskPerTradePercent: env.RISK_PER_TRADE_PERCENT,
+  atrStopMultiple: 2,           // stop = 2 x ATR(14) when the decision gives no usable stop
   sentinelPollIntervalSeconds: env.SENTINEL_POLL_INTERVAL_SECONDS,
   priceSpikeTriggerPercent: 3,  // flag moves > 3% in 15-min window
   volumeSpikeTriggerMultiple: 3, // flag volume > 3x 20-day average

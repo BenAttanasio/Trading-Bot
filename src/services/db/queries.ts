@@ -112,6 +112,20 @@ export async function getRecentAlerts(limit: number = 50): Promise<Alert[]> {
     .toArray();
 }
 
+/** Alerts the sentinel queued for the next pulse (urgency 4-6), newest first, not yet consumed. */
+export async function getQueuedAlerts(sinceMinutes: number, limit: number = 10): Promise<Alert[]> {
+  const since = new Date(Date.now() - sinceMinutes * 60 * 1000);
+  return getDb().collection<Alert>('alerts')
+    .find({ actionTaken: 'queued_for_pulse', createdAt: { $gte: since } })
+    .sort({ urgency: -1, createdAt: -1 })
+    .limit(limit)
+    .toArray();
+}
+
+export async function markAlertActioned(id: ObjectId, actionTaken: Alert['actionTaken']): Promise<void> {
+  await getDb().collection<Alert>('alerts').updateOne({ _id: id }, { $set: { actionTaken } });
+}
+
 // ─── Daily Summaries ─────────────────────────────────────
 
 export async function upsertDailySummary(summary: DailySummary): Promise<void> {

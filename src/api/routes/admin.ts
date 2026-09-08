@@ -5,6 +5,7 @@ import { eodSummaryJob } from '../../services/scheduler/jobs/eod-summary';
 import { runNightlyReflection, runWeeklyReview } from '../../engine/reflection';
 import { scoreDuePredictions } from '../../engine/predictions';
 import { runSelfImprove, approveChangeRequest, rejectChangeRequest } from '../../engine/self-improve';
+import { runStopGuard } from '../../engine/stop-guard';
 import { insertChangeRequest } from '../../services/db/learning-queries';
 import { ChangeRequest } from '../../services/db/models/reflection';
 import { createServiceLogger } from '../../utils/logger';
@@ -21,6 +22,7 @@ const JOBS: Record<string, () => Promise<unknown>> = {
   'nightly-reflection': runNightlyReflection,
   'weekly-review': runWeeklyReview,
   'self-improve': runSelfImprove,
+  'stop-guard': runStopGuard,
 };
 
 /** Loopback or RFC1918 private ranges (home LAN). Anything else needs ADMIN_TOKEN. */

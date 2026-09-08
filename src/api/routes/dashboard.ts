@@ -113,7 +113,7 @@ dashboardRouter.get('/', async (req, res) => {
       portfolioValue = parseFloat(account.portfolio_value);
       const lastEquity = parseFloat(account.last_equity);
       cashBalance = parseFloat(account.cash);
-      investedValue = parseFloat(account.long_market_value);
+      investedValue = parseFloat(account.long_market_value) + Math.abs(parseFloat(account.short_market_value || '0'));
       dailyPL = portfolioValue - lastEquity;
       dailyPLPercent = lastEquity > 0 ? (dailyPL / lastEquity) * 100 : 0;
     }
@@ -131,21 +131,29 @@ dashboardRouter.get('/', async (req, res) => {
         thesis: db.thesis || null,
         thesisFreshness: db.thesisFreshness || null,
         daysHeld: db.daysHeld || 0,
+        side: db.side ?? 'long',
+        stopPrice: db.stopPrice ?? null,
+        targetPrice: db.targetPrice ?? null,
+        timeStopAt: db.timeStopAt ?? null,
       }));
     } else {
       positions = alpacaPositions.map((ap) => {
         const db = dbPositions.find((d) => d.symbol === ap.symbol);
         return {
           symbol: ap.symbol,
-          qty: parseFloat(ap.qty),
+          side: ap.side === 'short' ? 'short' : 'long',
+          qty: Math.abs(parseFloat(ap.qty)),
           entryPrice: parseFloat(ap.avg_entry_price),
           currentPrice: parseFloat(ap.current_price),
-          marketValue: parseFloat(ap.market_value),
+          marketValue: Math.abs(parseFloat(ap.market_value)),
           unrealizedPL: parseFloat(ap.unrealized_pl),
           unrealizedPLPercent: parseFloat(ap.unrealized_plpc) * 100,
           thesis: db?.thesis || null,
           thesisFreshness: db?.thesisFreshness || null,
           daysHeld: db?.daysHeld || 0,
+          stopPrice: db?.stopPrice ?? null,
+          targetPrice: db?.targetPrice ?? null,
+          timeStopAt: db?.timeStopAt ?? null,
         };
       });
     }
@@ -189,6 +197,7 @@ dashboardRouter.get('/', async (req, res) => {
       recentTrades: recentTrades.map((t) => ({
         symbol: t.symbol,
         action: t.action,
+        intent: t.intent ?? (t.action === 'BUY' ? 'open_long' : 'close_long'),
         notional: t.notional,
         price: t.price,
         trigger: t.trigger,

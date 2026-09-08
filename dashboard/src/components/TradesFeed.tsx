@@ -53,7 +53,9 @@ export function TradesFeed({ trades }: TradesFeedProps) {
           <div className="p-6 text-center text-[var(--text-muted)] text-sm">No trades yet</div>
         ) : (
           trades.map((trade, i) => {
-            const isBuy = trade.action === 'BUY';
+            const intent = trade.intent ?? (trade.action === 'BUY' ? 'open_long' : 'close_long');
+            const isBuy = intent === 'open_long' || intent === 'close_short';
+            const label = intent === 'open_long' ? 'BUY' : intent === 'close_long' ? 'SELL' : intent === 'open_short' ? 'SHORT' : 'COVER';
             const isOpen = expandedId === i;
             return (
               <div key={i}>
@@ -66,7 +68,7 @@ export function TradesFeed({ trades }: TradesFeedProps) {
                       ? 'bg-[var(--accent-green)]/20 text-[var(--accent-green)]'
                       : 'bg-[var(--accent-red)]/20 text-[var(--accent-red)]'
                   }`}>
-                    {trade.action}
+                    {label}
                   </span>
                   <span className="font-bold text-sm">{trade.symbol}</span>
                   <span className="text-sm text-[var(--text-secondary)] tabular-nums">{formatCurrency(trade.notional)}</span>

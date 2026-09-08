@@ -1,7 +1,7 @@
 import { ObjectId } from 'mongodb';
 
 export type Workflow = 'portfolio_manager' | 'scout' | 'sentinel';
-export type Decision = 'HOLD' | 'BUY' | 'SELL' | 'TRIM' | 'ADD' | 'EXIT' | 'BLOCKED';
+export type Decision = 'HOLD' | 'BUY' | 'SELL' | 'SHORT' | 'COVER' | 'TRIM' | 'ADD' | 'EXIT' | 'BLOCKED';
 
 export interface MarketDataSnapshot {
   price: number;

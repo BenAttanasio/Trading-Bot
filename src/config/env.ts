@@ -29,6 +29,14 @@ export const env = {
 
   // Anthropic
   ANTHROPIC_API_KEY: requireEnv('ANTHROPIC_API_KEY'),
+  /**
+   * Model per tier. Defaults keep Opus out of the loop entirely: Sonnet 5 does the
+   * ranking, decisions, reviews and reflections; Haiku 4.5 does triage. Set
+   * AI_DEEP_MODEL=claude-opus-5 to opt back in for the deep tier.
+   */
+  AI_BUDGET_MODEL: optionalEnv('AI_BUDGET_MODEL', 'claude-haiku-4-5'),
+  AI_FAST_MODEL: optionalEnv('AI_FAST_MODEL', 'claude-sonnet-5'),
+  AI_DEEP_MODEL: optionalEnv('AI_DEEP_MODEL', 'claude-sonnet-5'),
 
   // MongoDB
   MONGODB_URI: requireEnv('MONGODB_URI'),
@@ -64,6 +72,22 @@ export const env = {
   MORNING_MAX_BUYS: parseInt(optionalEnv('MORNING_MAX_BUYS', '8'), 10),
   /** Below this % of equity invested, the morning cycle runs in "initial deployment" mode (conviction bar 5 instead of 6). */
   INITIAL_DEPLOYMENT_BELOW_PERCENT: parseFloat(optionalEnv('INITIAL_DEPLOYMENT_BELOW_PERCENT', '10')),
+  /** % of equity risked between entry and stop per trade (sizing = risk / stop distance, capped by MAX_POSITION_SIZE_DOLLARS). */
+  RISK_PER_TRADE_PERCENT: parseFloat(optionalEnv('RISK_PER_TRADE_PERCENT', '0.5')),
+  /** How many short entries the morning cycle may open (only when ENABLE_SHORTS=1). */
+  MORNING_MAX_SHORTS: parseInt(optionalEnv('MORNING_MAX_SHORTS', '2'), 10),
+  /** 1 = the ranking may propose shorts and the risk manager accepts open_short intents. */
+  ENABLE_SHORTS: optionalEnv('ENABLE_SHORTS', '0') === '1',
+  /** 1 = widen the morning universe with Alpaca's movers + most-actives screener. */
+  UNIVERSE_SCREENER: optionalEnv('UNIVERSE_SCREENER', '1') === '1',
+  /** Cap on symbols sent to the ranking call (watchlist first, screener fills the rest). */
+  UNIVERSE_MAX_CANDIDATES: parseInt(optionalEnv('UNIVERSE_MAX_CANDIDATES', '30'), 10),
+  /** Screener candidates below this price are dropped (penny names, warrants). */
+  UNIVERSE_MIN_PRICE: parseFloat(optionalEnv('UNIVERSE_MIN_PRICE', '5')),
+  /** Minimum scored predictions before the weekly review may tune params or file change requests. */
+  MIN_SCORED_FOR_TUNING: parseInt(optionalEnv('MIN_SCORED_FOR_TUNING', '30'), 10),
+  /** 1 = code-enforced stop / target / time-stop guard runs every sentinel tick. */
+  STOP_GUARD_ENABLED: optionalEnv('STOP_GUARD_ENABLED', '1') === '1',
   SENTINEL_POLL_INTERVAL_SECONDS: parseInt(optionalEnv('SENTINEL_POLL_INTERVAL_SECONDS', '60'), 10),
   INTRADAY_PULSE_INTERVAL_MINUTES: parseInt(optionalEnv('INTRADAY_PULSE_INTERVAL_MINUTES', '30'), 10),
   DAILY_AI_TOKEN_BUDGET: parseInt(optionalEnv('DAILY_AI_TOKEN_BUDGET', '2000000'), 10),

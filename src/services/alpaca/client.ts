@@ -89,6 +89,7 @@ export interface AlpacaAccount {
   account_blocked: boolean;
   pattern_day_trader: boolean;
   daytrade_count: number;
+  shorting_enabled?: boolean;
 }
 
 export async function getAccount(): Promise<AlpacaAccount> {

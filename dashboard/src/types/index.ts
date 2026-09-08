@@ -17,6 +17,9 @@ export interface DashboardData {
       total: number;
       budget: number;
       byModel: { budget: number; fast: number; deep: number };
+      costUsd?: number;
+      calls?: number;
+      models?: { budget: string; fast: string; deep: string };
     };
   };
   portfolio: {
@@ -40,6 +43,10 @@ export interface DashboardData {
 
 export interface PositionData {
   symbol: string;
+  side?: 'long' | 'short';
+  stopPrice?: number | null;
+  targetPrice?: number | null;
+  timeStopAt?: string | null;
   qty: number;
   entryPrice: number;
   currentPrice: number;
@@ -54,6 +61,7 @@ export interface PositionData {
 export interface TradeData {
   symbol: string;
   action: string;
+  intent?: 'open_long' | 'close_long' | 'open_short' | 'close_short';
   notional: number;
   price: number;
   trigger: string;

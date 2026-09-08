@@ -139,6 +139,28 @@ export async function cancelAllOrders(): Promise<void> {
   log.info('All open orders cancelled');
 }
 
+// ─── Assets ──────────────────────────────────────────────
+
+export interface AlpacaAsset {
+  id: string;
+  symbol: string;
+  name: string;
+  exchange: string;
+  status: string;
+  tradable: boolean;
+  shortable: boolean;
+  easy_to_borrow: boolean;
+  fractionable: boolean;
+}
+
+export async function getAsset(symbol: string): Promise<AlpacaAsset | null> {
+  try {
+    return await alpacaRequest<AlpacaAsset>(`/v2/assets/${symbol}`);
+  } catch {
+    return null;
+  }
+}
+
 // ─── Positions ───────────────────────────────────────────
 
 export async function getPositions(): Promise<AlpacaPosition[]> {

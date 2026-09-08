@@ -4,6 +4,7 @@ import type * as z from 'zod/v4';
 import { env } from '../../config/env';
 import { TRADING_RULES } from '../../config/trading-rules';
 import { getBotState, setBotState } from '../db/bot-state';
+import { estimateCostUsd, supportsAdaptiveThinking } from './pricing';
 import { createServiceLogger } from '../../utils/logger';
 
 const log = createServiceLogger('AI');
@@ -17,16 +18,27 @@ const anthropic = new Anthropic({
 export type ModelTier = 'budget' | 'fast' | 'deep';
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
-/** Model IDs are complete as-is — never append date suffixes. */
+/**
+ * Model IDs come from env (AI_BUDGET_MODEL / AI_FAST_MODEL / AI_DEEP_MODEL) and are
+ * complete as-is — never append date suffixes. Defaults: Haiku 4.5 for triage,
+ * Sonnet 5 for everything else. Opus is opt-in only.
+ *   budget: sentinel triage, queued-alert scouting, replay
+ *   fast:   trade decisions, position reviews, EOD, nightly reflection
+ *   deep:   morning ranking, stale-thesis reviews, weekly review (higher effort, same model by default)
+ */
 export const MODEL_IDS: Record<ModelTier, string> = {
-  budget: 'claude-haiku-4-5', // sentinel triage, intraday scouting
-  fast: 'claude-sonnet-5',    // trade decisions, position reviews, EOD, nightly reflection
-  deep: 'claude-opus-5',      // morning research, stale-thesis reviews, weekly review
+  budget: env.AI_BUDGET_MODEL,
+  fast: env.AI_FAST_MODEL,
+  deep: env.AI_DEEP_MODEL,
 };
 
 const DEFAULT_MAX_TOKENS: Record<ModelTier, number> = { budget: 1024, fast: 4096, deep: 8192 };
 /** Haiku 4.5 predates adaptive thinking / effort; the 5-series rejects sampling params. */
-const ADAPTIVE_THINKING: Record<ModelTier, boolean> = { budget: false, fast: true, deep: true };
+const ADAPTIVE_THINKING: Record<ModelTier, boolean> = {
+  budget: supportsAdaptiveThinking(MODEL_IDS.budget),
+  fast: supportsAdaptiveThinking(MODEL_IDS.fast),
+  deep: supportsAdaptiveThinking(MODEL_IDS.deep),
+};
 
 /** Server-side research tools (Opus 5 / Sonnet 5). Usage is metered per search. */
 export const WEB_RESEARCH_TOOLS: Anthropic.MessageCreateParams['tools'] = [
@@ -43,6 +55,10 @@ interface AIUsageState {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   byModel: Record<ModelTier, number>;
+  /** List-price dollars spent today, from real per-response usage. */
+  costUsd: number;
+  costByModel: Record<ModelTier, number>;
+  calls: number;
 }
 
 const USAGE_KEY = 'aiUsage';
@@ -55,6 +71,9 @@ function freshUsage(): AIUsageState {
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
     byModel: { budget: 0, fast: 0, deep: 0 },
+    costUsd: 0,
+    costByModel: { budget: 0, fast: 0, deep: 0 },
+    calls: 0,
   };
 }
 
@@ -88,7 +107,13 @@ export async function loadAIUsageState(): Promise<void> {
   try {
     const saved = await getBotState<AIUsageState>(USAGE_KEY);
     if (saved && saved.date === new Date().toDateString()) {
-      usage = { ...freshUsage(), ...saved, byModel: { ...freshUsage().byModel, ...saved.byModel } };
+      const fresh = freshUsage();
+      usage = {
+        ...fresh,
+        ...saved,
+        byModel: { ...fresh.byModel, ...saved.byModel },
+        costByModel: { ...fresh.costByModel, ...(saved.costByModel ?? {}) },
+      };
       log.info('Restored AI usage counters', { total: budgetTokensUsed() });
     }
   } catch (err) {
@@ -118,6 +143,10 @@ export function getDetailedTokenUsage(): {
   budget: number;
   byModel: Record<ModelTier, number>;
   cacheReadTokens: number;
+  costUsd: number;
+  costByModel: Record<ModelTier, number>;
+  calls: number;
+  models: Record<ModelTier, string>;
 } {
   checkAndResetBudget();
   return {
@@ -125,10 +154,14 @@ export function getDetailedTokenUsage(): {
     budget: env.DAILY_AI_TOKEN_BUDGET,
     byModel: { ...usage.byModel },
     cacheReadTokens: usage.cacheReadTokens,
+    costUsd: usage.costUsd,
+    costByModel: { ...usage.costByModel },
+    calls: usage.calls,
+    models: { ...MODEL_IDS },
   };
 }
 
-function recordUsage(tier: ModelTier, u: Anthropic.Usage): void {
+function recordUsage(tier: ModelTier, modelId: string, u: Anthropic.Usage): void {
   const cacheRead = u.cache_read_input_tokens ?? 0;
   const cacheWrite = u.cache_creation_input_tokens ?? 0;
   usage.inputTokens += u.input_tokens;
@@ -136,6 +169,15 @@ function recordUsage(tier: ModelTier, u: Anthropic.Usage): void {
   usage.cacheReadTokens += cacheRead;
   usage.cacheWriteTokens += cacheWrite;
   usage.byModel[tier] += u.input_tokens + cacheWrite + u.output_tokens + Math.round(cacheRead * 0.1);
+  const cost = estimateCostUsd(modelId, {
+    inputTokens: u.input_tokens,
+    outputTokens: u.output_tokens,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite,
+  });
+  usage.costUsd += cost;
+  usage.costByModel[tier] += cost;
+  usage.calls += 1;
   schedulePersist();
 }
 
@@ -248,6 +290,7 @@ function logResponse(tier: ModelTier, response: Anthropic.Message): void {
     cacheWrite: response.usage.cache_creation_input_tokens ?? 0,
     ...(searches ? { webSearches: searches } : {}),
     dailyTotal: budgetTokensUsed(),
+    dailyCostUsd: Number(usage.costUsd.toFixed(4)),
     stopReason: response.stop_reason,
     tier,
   });
@@ -271,7 +314,7 @@ export async function callAIText(options: AIRequestOptions): Promise<string> {
 
   try {
     const response = await anthropic.messages.create(params);
-    recordUsage(tier, response.usage);
+    recordUsage(tier, response.model, response.usage);
     logResponse(tier, response);
     throwIfRefused(response);
     return response.content
@@ -311,7 +354,7 @@ export async function callAIStructured<S extends z.ZodType>(
         messages,
         output_config: { ...(base.output_config ?? {}), format: zodOutputFormat(options.schema) },
       });
-      recordUsage(tier, response.usage);
+      recordUsage(tier, response.model, response.usage);
       logResponse(tier, response);
       throwIfRefused(response);
 

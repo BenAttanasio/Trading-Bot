@@ -57,6 +57,41 @@ export async function getRecentPredictions(limit = 50): Promise<Prediction[]> {
   return getDb().collection<Prediction>('predictions').find().sort({ createdAt: -1 }).limit(limit).toArray();
 }
 
+// ─── Rankings (one snapshot per morning cycle) ──────────
+
+export interface RankingSnapshot {
+  _id?: ObjectId;
+  date: string;
+  marketRead: string;
+  regime: 'risk_on' | 'risk_off' | 'mixed';
+  universeSize: number;
+  candidates: Array<{
+    symbol: string;
+    side: 'long' | 'short' | 'none';
+    score: number;
+    conviction: number;
+    confidence: number;
+    horizonDays: number;
+    expectedMovePct: number;
+    summary: string;
+    catalysts: string[];
+    risks: string[];
+    invalidationPrice: number | null;
+    targetPrice: number | null;
+  }>;
+  modelUsed: string;
+  createdAt: Date;
+}
+
+export async function insertRanking(r: RankingSnapshot): Promise<ObjectId> {
+  const res = await getDb().collection<RankingSnapshot>('rankings').insertOne(r);
+  return res.insertedId;
+}
+
+export async function getLatestRanking(): Promise<RankingSnapshot | null> {
+  return getDb().collection<RankingSnapshot>('rankings').findOne({}, { sort: { createdAt: -1 } });
+}
+
 // ─── Reflections ─────────────────────────────────────────
 
 export async function insertReflection(r: Reflection): Promise<ObjectId> {

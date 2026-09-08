@@ -24,6 +24,9 @@ export interface MorningResearchPromptParams {
   existingThesis?: string;
   availableData: string[];
   missingData: string[];
+  marketContext?: string;
+  atrPct?: number | null;
+  change1dPct?: number | null;
 }
 
 function fmtOpt(value: number | null, formatter: (v: number) => string, fallback = 'N/A (insufficient data)'): string {
@@ -43,12 +46,14 @@ export function buildMorningResearchPrompt(params: MorningResearchPromptParams):
 
 PRICE DATA:
 - Current Price: $${params.currentPrice.toFixed(2)} (source: ${params.priceSource})
+- Today: ${fmtOpt(params.change1dPct ?? null, (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)}%`)}
 - 5-Day Change: ${fmtOpt(params.priceChange5d, (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)}%`)}
 - 1-Month Change: ${fmtOpt(params.priceChange1m, (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)}%`)}
 - RSI(14): ${fmtOpt(params.rsi, (v) => v.toFixed(1))}
 ${smaLine}
+- ATR(14): ${fmtOpt(params.atrPct ?? null, (v) => `${v.toFixed(1)}% of price`)}
 - Volume: ${fmtOpt(params.volumeVsAvg, (v) => `${v.toFixed(1)}x average`)}
-
+${params.marketContext ? `\n${params.marketContext}\n` : ''}
 DATA AVAILABILITY:
 - Available: ${params.availableData.join(', ') || 'minimal'}
 - Missing: ${params.missingData.join(', ') || 'none'}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateRSI, calculateSMA, calculateVolumeAverage, Bar } from '../src/services/alpaca/market-data';
+import { calculateRSI, calculateSMA, calculateVolumeAverage, calculateATR, calculateRealizedVol, Bar } from '../src/services/alpaca/market-data';
 
 function bars(closes: number[], volume = 1000): Bar[] {
   return closes.map((c, i) => ({ t: `2026-01-${String(i + 1).padStart(2, '0')}`, o: c, h: c, l: c, c, v: volume } as unknown as Bar));
@@ -35,6 +35,24 @@ describe('calculateSMA', () => {
 
   it('falls back to the last close when there is not enough data', () => {
     expect(calculateSMA(bars([7, 9]), 5)).toBe(9);
+  });
+});
+
+describe('calculateATR', () => {
+  it('returns 0 without enough bars', () => {
+    expect(calculateATR(bars([1, 2, 3]))).toBe(0);
+  });
+
+  it('equals the constant true range for a flat series with a fixed high-low spread', () => {
+    const b = Array.from({ length: 20 }, (_, i) => ({ t: `2026-01-${String(i + 1).padStart(2, '0')}`, o: 100, h: 102, l: 98, c: 100, v: 1 } as unknown as Bar));
+    expect(calculateATR(b)).toBeCloseTo(4);
+  });
+});
+
+describe('calculateRealizedVol', () => {
+  it('is 0 for a flat series and positive for a noisy one', () => {
+    expect(calculateRealizedVol(bars(Array(25).fill(100)))).toBe(0);
+    expect(calculateRealizedVol(bars(Array.from({ length: 25 }, (_, i) => 100 + (i % 2 ? 3 : -3))))).toBeGreaterThan(10);
   });
 });
 

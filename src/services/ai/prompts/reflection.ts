@@ -98,8 +98,14 @@ export function buildWeeklyReviewPrompt(params: {
   benchmark: { botReturnPct: number | null; spyReturnPct: number | null; from: string | null; to: string | null };
   openPositions: Array<{ symbol: string; plPercent: number; daysHeld: number; thesis: string }>;
   tokenSpend: { total: number; budget: number };
+  sampleGate?: { minScored: number; gated: boolean };
 }): string {
-  const { weekStart, weekEnd, reflections, calibration, outcomes, benchmark, openPositions, tokenSpend } = params;
+  const { weekStart, weekEnd, reflections, calibration, outcomes, benchmark, openPositions, tokenSpend, sampleGate } = params;
+  const gateNote = sampleGate
+    ? sampleGate.gated
+      ? `\nSAMPLE SIZE: only ${calibration.n} scored predictions (need ${sampleGate.minScored}). Parameter changes and change requests will NOT be applied this week — you may still list them as proposals. Do not promote "Recent lessons" into rules on this little evidence; keep them as lessons.`
+      : `\nSAMPLE SIZE: ${calibration.n} scored predictions (>= ${sampleGate.minScored}); tuning is live this week. Still prefer small moves.`
+    : '';
 
   const nightly = reflections
     .filter((r) => r.type === 'nightly')
@@ -126,7 +132,7 @@ export function buildWeeklyReviewPrompt(params: {
 
   return `WEEKLY DEEP REVIEW — ${weekStart} to ${weekEnd}
 
-PERFORMANCE: bot ${fmtPct(benchmark.botReturnPct)} vs SPY ${fmtPct(benchmark.spyReturnPct)} (${benchmark.from ?? '?'} → ${benchmark.to ?? '?'}). AI spend today: ${tokenSpend.total.toLocaleString()} / ${tokenSpend.budget.toLocaleString()} budget tokens.
+PERFORMANCE: bot ${fmtPct(benchmark.botReturnPct)} vs SPY ${fmtPct(benchmark.spyReturnPct)} (${benchmark.from ?? '?'} → ${benchmark.to ?? '?'}). AI spend today: ${tokenSpend.total.toLocaleString()} / ${tokenSpend.budget.toLocaleString()} budget tokens.${gateNote}
 
 CLOSED TRADES (30d): ${outcomeStats}
   Worst: ${worst.map(fmtTrade).join(' || ') || 'none'}

@@ -26,20 +26,26 @@ src/config/
   trading-rules.ts          live rules: env defaults + playbook-tuned params (clamped)
 src/engine/
   orchestrator.ts           dispatch: morning cycle, intraday pulse, sentinel escalation
-  scout.ts                  research → trade decision → executeTrade → recordPrediction (BUY and PASS)
-  portfolio-manager.ts      position reviews, trailing stops, trade outcomes
-  execution.ts              kill switch (persisted), risk gate, order submit, decision log
-  risk-manager.ts           11 pre-trade checks incl. HARD_LIMITS; fails closed
+  scout.ts                  universe → ONE ranking call (rankUniverse) → per-name decision → sizing → executeTrade → recordPrediction
+  sizing.ts                 pure: resolveStop / resolveTarget / sizePosition (risk ÷ stop distance, calibration multiplier)
+  stop-guard.ts             pure evaluateGuard/tightenStop + runStopGuard: code-enforced stop/target/time/trailing exits
+  exits.ts                  closePosition: the one side-aware way to close/trim + write a trade_outcome
+  portfolio-manager.ts      AI position reviews (may only tighten stops), trailing-stop activation
+  execution.ts              kill switch (persisted), intents (open/close × long/short), risk gate, order submit
+  risk-manager.ts           pre-trade checks incl. HARD_LIMITS, intent-aware (exits never blocked on size); fails closed
   predictions.ts            prediction ledger: dueDateFor / scoreDirection / calibration
-  reflection.ts             nightly post-mortem (Sonnet 5) + weekly deep review (Opus 5 + web search)
+  stats.ts                  pure: expectancy, profit factor, Sharpe, drawdown, AI cost vs equity
+  reflection.ts             nightly post-mortem + weekly review; params/change requests gated on MIN_SCORED_FOR_TUNING
   benchmark.ts              equity vs SPY
   self-improve.ts           change_request → worktree → claude -p → tests → merge/deploy or await approval
 src/services/
-  ai/client.ts              callAIStructured / callAIText; model tiers; prompt caching; token budget
+  ai/client.ts              callAIStructured / callAIText; model tiers from env (Opus opt-in); caching; token budget; $ cost
+  ai/pricing.ts             list prices per model → estimateCostUsd
   ai/schemas.ts             Zod schemas for every structured output (+ normalizers that clamp)
-  ai/prompts/*              prompts; system prompts are functions so tuned rules stay current
+  ai/prompts/*              prompts; ranking.ts is the morning call; system prompts are functions so tuned rules stay current
   playbook.ts               strategy.md + params (Mongo source of truth, mirrored to disk)
-  alpaca/*                  REST client, market data, news, trading
+  alpaca/*                  REST client, market data (ATR, multi-symbol bars), news, trading, screener, market-context
+scripts/replay.ts           offline replay of the ranking prompt over past days; scores calls vs baseline
   db/*                      Mongo connection, models, queries, learning-queries, bot-state
   scheduler/*               node-cron jobs + sentinel loop
 src/api/                    Express routes; also serves dashboard/dist
@@ -66,6 +72,14 @@ Unified Dashboard's Trading view read `/api/*` only.
 - The playbook may tune only `TUNABLE_BOUNDS` keys, always clamped.
 - Stable prompt text goes in `systemPrompt`/`cachedBlocks`; anything per-call
   goes in `userPrompt`/`contextBlocks` (prompt caching depends on it).
+- Every entry carries `stopPrice`, `targetPrice`, `timeStopAt` on its position
+  record; the stop guard enforces them without a model. Reviews may only
+  tighten a stop (`tightenStop`). Exits go through `exits.ts` so a
+  `trade_outcome` is always written.
+- Opening intents (`open_long`/`open_short`) get the full risk gate; closing
+  intents are never blocked on size. Shorts need `ENABLE_SHORTS=1`, whole
+  shares, and easy-to-borrow.
+- Model ids come from env; do not hard-code `claude-opus-*` anywhere.
 
 ## Self-modification rules (for the headless agent)
 

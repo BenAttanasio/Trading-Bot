@@ -1,13 +1,16 @@
 import { getPositions, AlpacaPosition } from '../services/alpaca/trading';
-import { getSnapshot, getBars, calculateRSI, calculateVolumeAverage, Bar } from '../services/alpaca/market-data';
+import { getBars, calculateRSI, calculateVolumeAverage, Bar } from '../services/alpaca/market-data';
 import { getNewsForSymbol } from '../services/alpaca/news';
+import { getMarketContext, formatMarketContext, sectorPerformanceLine, MarketContext } from '../services/alpaca/market-context';
 import { callAIStructured } from '../services/ai/client';
 import { getTradeDecisionSystemPrompt, buildPositionReviewPrompt } from '../services/ai/prompts/trade-decision';
 import { getPlaybookBlock } from '../services/playbook';
 import { PositionReviewSchema, normalizePositionReview } from '../services/ai/schemas';
-import { getAllPositions, upsertPosition, removePosition, getPosition, getRecentDecisions, insertDecisionLog, insertTradeOutcome } from '../services/db/queries';
-import { Position, calculateThesisFreshness } from '../services/db/models/position';
+import { getAllPositions, upsertPosition, removePosition, getPosition, getRecentDecisions, insertDecisionLog } from '../services/db/queries';
+import { Position, calculateThesisFreshness, positionSide } from '../services/db/models/position';
 import { executeTrade } from './execution';
+import { closePosition } from './exits';
+import { tightenStop } from './stop-guard';
 import { TRADING_RULES } from '../config/trading-rules';
 import { createServiceLogger } from '../utils/logger';
 import { daysSince, minutesSince } from '../utils/time';
@@ -24,10 +27,11 @@ export async function runPortfolioReview(): Promise<void> {
   }
 
   log.info(`Reviewing ${alpacaPositions.length} positions`);
+  const ctx = await getMarketContext();
 
   for (const pos of alpacaPositions) {
     try {
-      await reviewPosition(pos);
+      await reviewPosition(pos, ctx);
     } catch (error) {
       log.error(`Failed to review position: ${pos.symbol}`, { error });
     }
@@ -36,15 +40,17 @@ export async function runPortfolioReview(): Promise<void> {
   log.info('Portfolio review complete');
 }
 
-async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
+async function reviewPosition(alpacaPos: AlpacaPosition, ctx: MarketContext): Promise<void> {
   const symbol = alpacaPos.symbol;
+  const side = alpacaPos.side === 'short' ? 'short' : 'long';
   const entryPrice = parseFloat(alpacaPos.avg_entry_price);
   const currentPrice = parseFloat(alpacaPos.current_price);
-  const plPercent = parseFloat(alpacaPos.unrealized_plpc) * 100;
-  const marketValue = parseFloat(alpacaPos.market_value);
+  const plPercent = parseFloat(alpacaPos.unrealized_plpc) * 100; // side-aware from Alpaca
+  const marketValue = Math.abs(parseFloat(alpacaPos.market_value));
+  const qtyAbs = Math.abs(parseFloat(alpacaPos.qty));
 
-  // Get stored position data (thesis, etc.)
-  let storedPosition = await getPosition(symbol);
+  // Get stored position data (thesis, guard levels, etc.)
+  const storedPosition = await getPosition(symbol);
   const daysHeld = storedPosition
     ? daysSince(new Date(storedPosition.createdAt))
     : 0;
@@ -61,43 +67,21 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
   const currentVolume = bars.bars[bars.bars.length - 1]?.v || 0;
   const volumeVsAvg = volumeAvg > 0 ? currentVolume / volumeAvg : 1;
 
-  // Check trailing stop
+  // Trailing stop floor (the stop guard also enforces this every tick; this is the fallback)
   if (storedPosition?.trailingStop) {
     const floorPercent = parseFloat(storedPosition.trailingStop.floor);
     if (plPercent <= floorPercent) {
       log.warn(`Trailing stop triggered for ${symbol}: P&L ${plPercent.toFixed(2)}% below floor ${floorPercent}%`);
-      const trailingResult = await executeTrade({
-        symbol,
-        action: 'SELL',
-        notional: marketValue,
-        qty: parseFloat(alpacaPos.qty),
+      await closePosition({
+        alpacaPos,
+        stored: storedPosition,
+        exitReason: 'trailing_stop',
+        exitWorkflow: 'portfolio_manager',
         trigger: 'portfolio_manager',
         aiReasoning: `Trailing stop triggered: P&L dropped to ${plPercent.toFixed(2)}% below floor of ${floorPercent}%`,
         aiConviction: 9,
-        marketDataSnapshot: { price: currentPrice, volume: currentVolume, changePercent: plPercent },
+        currentVolume,
       });
-      if (trailingResult.success && storedPosition) {
-        const exitDate = new Date();
-        const plPct = ((currentPrice - entryPrice) / entryPrice) * 100;
-        await insertTradeOutcome({
-          symbol,
-          entryTrigger: storedPosition.entryTrigger,
-          entryPrice,
-          exitPrice: currentPrice,
-          entryDate: new Date(storedPosition.createdAt),
-          exitDate,
-          daysHeld: daysSince(new Date(storedPosition.createdAt)),
-          realizedPLPercent: plPct,
-          realizedPLDollars: marketValue * (plPct / 100),
-          aiConviction: 0,
-          originalThesis: storedPosition.thesis,
-          exitReason: 'trailing_stop',
-          exitWorkflow: 'portfolio_manager',
-          thesisFreshness: storedPosition.thesisFreshness,
-          createdAt: exitDate,
-        }).catch((err) => log.error(`Failed to insert trade outcome for ${symbol}`, { err }));
-      }
-      await removePosition(symbol);
       return;
     }
   }
@@ -132,23 +116,25 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
       if (storedPosition) {
         await upsertPosition({
           ...storedPosition,
+          side,
           currentPrice,
           unrealizedPL: parseFloat(alpacaPos.unrealized_pl),
           unrealizedPLPercent: plPercent,
-          quantity: parseFloat(alpacaPos.qty),
+          quantity: qtyAbs,
         });
       }
       return;
     }
   }
 
-  // Ask AI for decision (deep model + higher effort when the thesis is stale)
+  // Ask AI for decision (deep tier + higher effort when the thesis is stale)
   const parsed = await callAIStructured({
     schema: PositionReviewSchema,
     systemPrompt: getTradeDecisionSystemPrompt(),
     cachedBlocks: [getPlaybookBlock()],
     userPrompt: buildPositionReviewPrompt({
       symbol,
+      side,
       entryPrice,
       currentPrice,
       plPercent,
@@ -157,7 +143,11 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
       recentNews: news.map((n) => ({ headline: n.headline, date: n.created_at.split('T')[0] })),
       rsi,
       volumeVsAvg,
-      sectorPerformance: 'market average', // simplified
+      sectorPerformance: sectorPerformanceLine(ctx, storedPosition?.sector ?? ''),
+      stopPrice: storedPosition?.stopPrice ?? null,
+      targetPrice: storedPosition?.targetPrice ?? null,
+      timeStopAt: storedPosition?.timeStopAt ? new Date(storedPosition.timeStopAt) : null,
+      marketContext: formatMarketContext(ctx),
     }),
     model: thesisFreshness === 'stale' ? 'deep' : 'fast',
     effort: thesisFreshness === 'stale' ? 'high' : 'medium',
@@ -167,6 +157,7 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
   const decision = normalizePositionReview(parsed);
   log.info(`AI decision for ${symbol}: ${decision.action} (conviction: ${decision.conviction})`, {
     reasoning: decision.reasoning,
+    newStop: decision.newStopPrice,
   });
 
   // Log all decisions (including HOLD) so cooldown gate and audit trail work correctly
@@ -176,7 +167,7 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
     decision: decision.action as any,
     executed: false, // will be updated to true by executeTrade for EXIT/TRIM/ADD
     blockedReason: null,
-    aiResponse: { reasoning: decision.reasoning, conviction: decision.conviction },
+    aiResponse: { reasoning: decision.reasoning, conviction: decision.conviction, newStopPrice: decision.newStopPrice },
     marketDataSnapshot: { price: currentPrice, volume: currentVolume, changePercent: plPercent },
     createdAt: new Date(),
   });
@@ -185,90 +176,52 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
   switch (decision.action) {
     case 'EXIT':
       if (marketValue < 1) {
-        log.warn(`${symbol} position too small to sell ($${marketValue.toFixed(4)}) — dropping from tracking`);
+        log.warn(`${symbol} position too small to close ($${marketValue.toFixed(4)}) — dropping from tracking`);
         await removePosition(symbol);
-      } else {
-        const exitResult = await executeTrade({
-          symbol,
-          action: 'SELL',
-          notional: marketValue,
-          qty: parseFloat(alpacaPos.qty),
+        return;
+      }
+      {
+        const r = await closePosition({
+          alpacaPos,
+          stored: storedPosition,
+          exitReason: 'ai_exit',
+          exitWorkflow: 'portfolio_manager',
           trigger: 'portfolio_manager',
           aiReasoning: decision.reasoning,
           aiConviction: decision.conviction,
-          marketDataSnapshot: { price: currentPrice, volume: currentVolume, changePercent: plPercent },
+          currentVolume,
         });
-        if (exitResult.success) {
-          if (storedPosition) {
-            const exitDate = new Date();
-            const plPct = ((currentPrice - entryPrice) / entryPrice) * 100;
-            await insertTradeOutcome({
-              symbol,
-              entryTrigger: storedPosition.entryTrigger,
-              entryPrice,
-              exitPrice: currentPrice,
-              entryDate: new Date(storedPosition.createdAt),
-              exitDate,
-              daysHeld: daysSince(new Date(storedPosition.createdAt)),
-              realizedPLPercent: plPct,
-              realizedPLDollars: marketValue * (plPct / 100),
-              aiConviction: decision.conviction,
-              originalThesis: storedPosition.thesis,
-              exitReason: 'ai_exit',
-              exitWorkflow: 'portfolio_manager',
-              thesisFreshness: storedPosition.thesisFreshness,
-              createdAt: exitDate,
-            }).catch((err) => log.error(`Failed to insert trade outcome for ${symbol}`, { err }));
-          }
-          await removePosition(symbol);
-        }
+        if (r.success) return;
       }
       break;
 
-    case 'TRIM': {
-      const trimAmount = marketValue * 0.5; // sell half
-      if (trimAmount >= 1) {
-        const trimResult = await executeTrade({
-          symbol,
-          action: 'SELL',
-          notional: trimAmount,
-          qty: Math.floor((parseFloat(alpacaPos.qty) / 2) * 1e6) / 1e6,
+    case 'TRIM':
+      if (marketValue * 0.5 >= 1) {
+        await closePosition({
+          alpacaPos,
+          stored: storedPosition,
+          exitReason: 'ai_trim',
+          exitWorkflow: 'portfolio_manager',
           trigger: 'portfolio_manager',
           aiReasoning: `TRIM: ${decision.reasoning}`,
           aiConviction: decision.conviction,
-          marketDataSnapshot: { price: currentPrice, volume: currentVolume, changePercent: plPercent },
+          fraction: 0.5,
+          currentVolume,
         });
-        if (trimResult.success && storedPosition) {
-          const exitDate = new Date();
-          const plPct = ((currentPrice - entryPrice) / entryPrice) * 100;
-          await insertTradeOutcome({
-            symbol,
-            entryTrigger: storedPosition.entryTrigger,
-            entryPrice,
-            exitPrice: currentPrice,
-            entryDate: new Date(storedPosition.createdAt),
-            exitDate,
-            daysHeld: daysSince(new Date(storedPosition.createdAt)),
-            realizedPLPercent: plPct,
-            realizedPLDollars: trimAmount * (plPct / 100),
-            aiConviction: decision.conviction,
-            originalThesis: storedPosition.thesis,
-            exitReason: 'ai_trim',
-            exitWorkflow: 'portfolio_manager',
-            thesisFreshness: storedPosition.thesisFreshness,
-            createdAt: exitDate,
-          }).catch((err) => log.error(`Failed to insert trim outcome for ${symbol}`, { err }));
-        }
       }
       break;
-    }
 
-    case 'ADD':
+    case 'ADD': {
+      if (side === 'short') {
+        log.info(`ADD on a short (${symbol}) is not supported — holding`);
+        break;
+      }
       const addAmount = Math.min(TRADING_RULES.maxPositionSizeDollars * 0.5, TRADING_RULES.maxPositionSizeDollars - marketValue);
       if (addAmount > 5) {
         await executeTrade({
           symbol,
           action: 'BUY',
+          intent: 'open_long',
           notional: addAmount,
           trigger: 'portfolio_manager',
           aiReasoning: `ADD: ${decision.reasoning}`,
@@ -277,10 +230,17 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
         });
       }
       break;
+    }
 
     case 'HOLD':
     default:
       break;
+  }
+
+  // The review may only tighten the code-enforced stop
+  const keptStop = tightenStop(side, storedPosition?.stopPrice ?? null, decision.newStopPrice, currentPrice);
+  if (keptStop !== (storedPosition?.stopPrice ?? null)) {
+    log.info(`${symbol}: stop tightened ${storedPosition?.stopPrice ?? 'none'} → ${keptStop}`);
   }
 
   // Update stored position
@@ -292,9 +252,10 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
       tags: [],
     }),
     symbol,
+    side,
     entryPrice,
     currentPrice,
-    quantity: parseFloat(alpacaPos.qty),
+    quantity: qtyAbs,
     unrealizedPL: parseFloat(alpacaPos.unrealized_pl),
     unrealizedPLPercent: plPercent,
     daysHeld,
@@ -302,8 +263,12 @@ async function reviewPosition(alpacaPos: AlpacaPosition): Promise<void> {
     thesisLastUpdated: decision.thesisUpdate ? new Date() : (storedPosition?.thesisLastUpdated || new Date()),
     thesisFreshness: decision.thesisUpdate ? 'fresh' : thesisFreshness,
     exitConditions: decision.exitConditions,
+    stopPrice: keptStop,
     lastReviewedAt: new Date(),
   };
 
   await upsertPosition(updatedPosition);
 }
+
+/** Exposed for tests/tools: which side a stored record is on. */
+export { positionSide };

@@ -3,7 +3,10 @@ import { ObjectId } from 'mongodb';
 export interface Research {
   _id?: ObjectId;
   symbol: string;
-  type: 'morning_research' | 'deep_dive' | 'sentinel_escalation';
+  type: 'morning_research' | 'deep_dive' | 'sentinel_escalation' | 'ranking';
+  /** Ranking output only */
+  side?: 'long' | 'short' | 'none';
+  score?: number;
   summary: string;
   fullAnalysis: string;
   sentiment: 'bullish' | 'bearish' | 'neutral';

@@ -1,7 +1,7 @@
 import { submitOrder, getOrder, AlpacaOrder } from '../services/alpaca/trading';
 import { insertTrade, updateTradeStatus } from '../services/db/queries';
-import { createTrade, Trade, TradeTrigger, OrderStatus } from '../services/db/models/trade';
-import { evaluateRisk, RiskCheckResult } from './risk-manager';
+import { createTrade, Trade, TradeTrigger, OrderStatus, TradeIntent } from '../services/db/models/trade';
+import { evaluateRisk, RiskCheckResult, intentFor } from './risk-manager';
 import { insertDecisionLog } from '../services/db/queries';
 import { DecisionLog } from '../services/db/models/decision-log';
 import { isRegularHours } from '../services/scheduler/market-hours';
@@ -12,9 +12,12 @@ const log = createServiceLogger('Execution');
 
 export interface ExecutionRequest {
   symbol: string;
+  /** Alpaca side. When `intent` is given the side is derived from it and this is ignored. */
   action: 'BUY' | 'SELL';
+  /** open_long (default for BUY) | close_long (default for SELL) | open_short | close_short */
+  intent?: TradeIntent;
   notional: number;
-  /** Exact share quantity (SELL exits/trims): avoids notional rounding past the shares actually held. */
+  /** Exact share quantity (exits/trims, and every short — Alpaca shorts need whole shares). */
   qty?: number;
   trigger: TradeTrigger;
   aiReasoning: string;
@@ -35,6 +38,19 @@ export interface ExecutionResult {
   order?: AlpacaOrder;
   riskCheck: RiskCheckResult;
   blockedReason?: string;
+}
+
+export function sideForIntent(intent: TradeIntent): 'buy' | 'sell' {
+  return intent === 'open_long' || intent === 'close_short' ? 'buy' : 'sell';
+}
+
+function decisionForIntent(intent: TradeIntent): DecisionLog['decision'] {
+  switch (intent) {
+    case 'open_long': return 'BUY';
+    case 'close_long': return 'SELL';
+    case 'open_short': return 'SHORT';
+    case 'close_short': return 'COVER';
+  }
 }
 
 // Global kill switch — mirrored to bot_state so a restart cannot silently resume trading
@@ -65,10 +81,14 @@ export function isTradingPaused(): boolean {
 }
 
 export async function executeTrade(request: ExecutionRequest): Promise<ExecutionResult> {
+  const intent = intentFor(request);
+  const side = sideForIntent(intent);
+  const action = side.toUpperCase() as 'BUY' | 'SELL';
+
   // Check kill switch
   if (tradingPaused) {
-    log.warn(`Trade blocked by kill switch: ${request.action} ${request.symbol}`);
-    await logDecision(request, 'BLOCKED', false, 'Trading paused (kill switch active)');
+    log.warn(`Trade blocked by kill switch: ${intent} ${request.symbol}`);
+    await logDecision(request, intent, 'BLOCKED', false, 'Trading paused (kill switch active)');
     return {
       success: false,
       riskCheck: {
@@ -80,10 +100,23 @@ export async function executeTrade(request: ExecutionRequest): Promise<Execution
     };
   }
 
+  // Shorts: whole shares only, and a quantity is mandatory
+  if (intent === 'open_short') {
+    const qty = Math.floor(request.qty ?? 0);
+    if (qty < 1) {
+      const reason = `Short ${request.symbol} needs a whole-share qty (got ${request.qty ?? 'none'})`;
+      log.warn(reason);
+      await logDecision(request, intent, 'BLOCKED', false, reason);
+      return { success: false, riskCheck: { allPassed: false, details: { wholeShares: false }, blockedReason: reason }, blockedReason: reason };
+    }
+    request = { ...request, qty };
+  }
+
   // Run risk checks
   const riskCheck = await evaluateRisk({
     symbol: request.symbol,
-    action: request.action,
+    action,
+    intent,
     notional: request.notional,
     sector: request.sector,
   });
@@ -91,7 +124,8 @@ export async function executeTrade(request: ExecutionRequest): Promise<Execution
   // Log decision BEFORE execution
   await logDecision(
     request,
-    riskCheck.allPassed ? request.action : 'BLOCKED',
+    intent,
+    riskCheck.allPassed ? decisionForIntent(intent) : 'BLOCKED',
     riskCheck.allPassed,
     riskCheck.blockedReason
   );
@@ -122,7 +156,7 @@ export async function executeTrade(request: ExecutionRequest): Promise<Execution
 
     const order = await submitOrder({
       symbol: request.symbol,
-      side: request.action.toLowerCase() as 'buy' | 'sell',
+      side,
       notional: request.qty ? undefined : request.notional,
       qty: request.qty,
       // During extended hours, use limit order with current price
@@ -136,7 +170,8 @@ export async function executeTrade(request: ExecutionRequest): Promise<Execution
 
     const trade = createTrade({
       symbol: request.symbol,
-      action: request.action,
+      action,
+      intent,
       quantity: 0, // will be updated after fill
       price: 0,    // will be updated after fill
       notional: request.notional,
@@ -153,10 +188,11 @@ export async function executeTrade(request: ExecutionRequest): Promise<Execution
 
     await insertTrade(trade);
 
-    log.info(`Trade executed: ${request.action} ${request.symbol} $${request.notional}`, {
+    log.info(`Trade executed: ${intent} ${request.symbol} $${request.notional}`, {
       orderId: order.id,
       status: order.status,
       trigger: request.trigger,
+      qty: request.qty,
     });
 
     // Poll for fill (non-blocking)
@@ -166,7 +202,7 @@ export async function executeTrade(request: ExecutionRequest): Promise<Execution
 
     return { success: true, trade, order, riskCheck };
   } catch (error) {
-    log.error(`Trade execution failed: ${request.action} ${request.symbol}`, { error });
+    log.error(`Trade execution failed: ${intent} ${request.symbol}`, { error });
     return {
       success: false,
       riskCheck,
@@ -200,19 +236,21 @@ async function pollForFill(orderId: string, maxAttempts: number = 10): Promise<v
 
 async function logDecision(
   request: ExecutionRequest,
-  decision: string,
+  intent: TradeIntent,
+  decision: DecisionLog['decision'],
   executed: boolean,
   blockedReason: string | null
 ): Promise<void> {
   const decisionLog: DecisionLog = {
     symbol: request.symbol,
     workflow: request.trigger === 'sentinel' ? 'sentinel' : request.trigger === 'morning_research' ? 'scout' : 'portfolio_manager',
-    decision: decision as any,
+    decision,
     executed,
     blockedReason,
     aiResponse: {
       reasoning: request.aiReasoning,
       conviction: request.aiConviction,
+      intent,
       ...(request.aiExtras ?? {}),
     },
     marketDataSnapshot: request.marketDataSnapshot || {

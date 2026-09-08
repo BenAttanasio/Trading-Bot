@@ -28,6 +28,8 @@ export const api = {
   getReflections: (limit = 14) => fetchApi<any>(`/learning/reflections?limit=${limit}`),
   getPlaybook: () => fetchApi<any>('/learning/playbook'),
   getChangeRequests: () => fetchApi<any>('/learning/change-requests'),
+  getLearningStats: () => fetchApi<any>('/learning/stats'),
+  getLatestRanking: () => fetchApi<any>('/learning/ranking'),
   runJob: (name: string) => fetchApi<any>(`/admin/jobs/${name}`, { method: 'POST' }),
   approveChangeRequest: (id: string) => fetchApi<any>(`/admin/change-requests/${id}/approve`, { method: 'POST' }),
   rejectChangeRequest: (id: string) => fetchApi<any>(`/admin/change-requests/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason: 'rejected from dashboard' }) }),

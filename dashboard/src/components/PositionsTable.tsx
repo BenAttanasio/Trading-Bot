@@ -34,6 +34,7 @@ export function PositionsTable({ positions }: PositionsTableProps) {
               <th className="text-right p-3 font-semibold">Current</th>
               <th className="text-right p-3 font-semibold">P&L</th>
               <th className="text-right p-3 font-semibold">Value</th>
+              <th className="text-right p-3 font-semibold">Stop / Target</th>
               <th className="text-center p-3 font-semibold">Days</th>
               <th className="text-center p-3 font-semibold">Thesis</th>
             </tr>
@@ -52,7 +53,10 @@ export function PositionsTable({ positions }: PositionsTableProps) {
                   className="border-b border-[var(--divider)] hover:bg-[var(--bg-hover)] cursor-pointer"
                   onClick={() => setExpanded(expanded === pos.symbol ? null : pos.symbol)}
                 >
-                  <td className="p-3 font-bold">{pos.symbol}</td>
+                  <td className="p-3 font-bold">
+                    {pos.symbol}
+                    {pos.side === 'short' && <span className="ml-2 text-[0.6rem] font-bold tracking-[0.12em] px-1.5 py-0.5 rounded bg-[rgba(248,81,73,0.16)] text-[var(--crit)]">SHORT</span>}
+                  </td>
                   <td className="p-3 text-right">{formatCurrency(pos.entryPrice)}</td>
                   <td className="p-3 text-right">{formatCurrency(pos.currentPrice)}</td>
                   <td className={`p-3 text-right font-medium ${plColor}`}>
@@ -60,6 +64,11 @@ export function PositionsTable({ positions }: PositionsTableProps) {
                     <span className="text-xs ml-1 opacity-80">({pos.unrealizedPLPercent >= 0 ? '+' : ''}{pos.unrealizedPLPercent.toFixed(2)}%)</span>
                   </td>
                   <td className="p-3 text-right">{formatCurrency(pos.marketValue)}</td>
+                  <td className="p-3 text-right text-xs tabular-nums" title={pos.timeStopAt ? `time stop ${new Date(pos.timeStopAt).toLocaleDateString()}` : 'no time stop'}>
+                    <span className="text-[var(--crit)]">{pos.stopPrice != null ? formatCurrency(pos.stopPrice) : '—'}</span>
+                    <span className="text-[var(--muted)]"> / </span>
+                    <span className="text-[var(--ok)]">{pos.targetPrice != null ? formatCurrency(pos.targetPrice) : '—'}</span>
+                  </td>
                   <td className="p-3 text-center">{pos.daysHeld}d</td>
                   <td className="p-3 text-center">
                     <div className={`w-2 h-2 rounded-full inline-block ${freshnessColor}`} title={pos.thesisFreshness || 'unknown'} />

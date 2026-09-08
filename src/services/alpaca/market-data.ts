@@ -82,6 +82,46 @@ export async function getBars(
   });
 }
 
+/**
+ * Daily bars for many symbols in one request (paginated). Alpaca's `limit` is the
+ * total across symbols, so ask for enough and follow `next_page_token`.
+ */
+export async function getBarsMulti(
+  symbols: string[],
+  timeframe: string = '1Day',
+  perSymbol: number = 30,
+  end?: string,
+  startOverride?: string
+): Promise<Record<string, Bar[]>> {
+  const out: Record<string, Bar[]> = {};
+  if (symbols.length === 0) return out;
+  const days = Math.ceil(perSymbol * 1.6) + 7;
+  const endMs = end ? new Date(end).getTime() : Date.now();
+  const start = startOverride ?? new Date(endMs - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  let pageToken: string | undefined;
+  for (let page = 0; page < 20; page++) {
+    const params: Record<string, string> = {
+      symbols: symbols.join(','),
+      timeframe,
+      start,
+      limit: '10000',
+    };
+    if (end) params.end = end;
+    if (pageToken) params.page_token = pageToken;
+    const res = await alpacaRequest<{ bars: Record<string, Bar[]>; next_page_token: string | null }>('/v2/stocks/bars', {
+      useDataUrl: true,
+      params,
+    });
+    for (const [sym, bars] of Object.entries(res.bars ?? {})) {
+      out[sym] = [...(out[sym] ?? []), ...bars];
+    }
+    if (!res.next_page_token) break;
+    pageToken = res.next_page_token;
+  }
+  for (const sym of Object.keys(out)) out[sym] = out[sym].slice(-perSymbol);
+  return out;
+}
+
 export async function getLatestPrice(symbol: string): Promise<number> {
   const snapshot = await getSnapshot(symbol);
   return snapshot.latestTrade.p;
@@ -152,6 +192,35 @@ export function calculateSMA(bars: Bar[], period: number): number {
   if (bars.length < period) return bars[bars.length - 1]?.c || 0;
   const slice = bars.slice(-period);
   return slice.reduce((sum, b) => sum + b.c, 0) / period;
+}
+
+/** Average True Range (Wilder). Returns 0 with fewer than period+1 bars. */
+export function calculateATR(bars: Bar[], period: number = 14): number {
+  if (bars.length < period + 1) return 0;
+  const trs: number[] = [];
+  for (let i = 1; i < bars.length; i++) {
+    const prevClose = bars[i - 1].c;
+    const tr = Math.max(bars[i].h - bars[i].l, Math.abs(bars[i].h - prevClose), Math.abs(bars[i].l - prevClose));
+    trs.push(tr);
+  }
+  let atr = trs.slice(0, period).reduce((s, v) => s + v, 0) / period;
+  for (let i = period; i < trs.length; i++) {
+    atr = (atr * (period - 1) + trs[i]) / period;
+  }
+  return atr;
+}
+
+/** Annualized realized volatility (%) from daily closes; 0 with fewer than 3 bars. */
+export function calculateRealizedVol(bars: Bar[], period: number = 20): number {
+  const closes = bars.slice(-(period + 1)).map((b) => b.c);
+  if (closes.length < 3) return 0;
+  const rets: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    if (closes[i - 1] > 0) rets.push(Math.log(closes[i] / closes[i - 1]));
+  }
+  const mean = rets.reduce((s, r) => s + r, 0) / rets.length;
+  const variance = rets.reduce((s, r) => s + (r - mean) ** 2, 0) / Math.max(1, rets.length - 1);
+  return Math.sqrt(variance) * Math.sqrt(252) * 100;
 }
 
 export function calculateVolumeAverage(bars: Bar[], period: number = 20): number {

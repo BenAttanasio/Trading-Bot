@@ -5,6 +5,7 @@ import { EodSummarySchema, normalizeEodSummary } from '../../ai/schemas';
 import { EOD_SUMMARY_SYSTEM_PROMPT, buildEodSummaryPrompt } from '../../ai/prompts/eod-summary';
 import { getTradesToday, getDecisionsToday, getRecentAlerts, upsertDailySummary, getAllPositions } from '../../db/queries';
 import { getStartingEquity } from '../../db/bot-state';
+import { getDetailedTokenUsage } from '../../ai/client';
 import { recordDailyBenchmark } from '../../../engine/benchmark';
 import { DailySummary } from '../../db/models/daily-summary';
 import { getETDateISO } from '../../../utils/time';
@@ -31,7 +32,7 @@ export async function eodSummaryJob(): Promise<void> {
     const lastEquity = parseFloat(account.last_equity);
     const dailyPL = portfolioValue - lastEquity;
     const dailyPLPercent = lastEquity > 0 ? (dailyPL / lastEquity) * 100 : 0;
-    const investedValue = parseFloat(account.long_market_value);
+    const investedValue = parseFloat(account.long_market_value) + Math.abs(parseFloat(account.short_market_value || '0'));
     // Total P&L is measured against the equity captured on first boot (or STARTING_EQUITY).
     const totalPL = startingEquity ? portfolioValue - startingEquity : dailyPL;
 
@@ -95,6 +96,8 @@ export async function eodSummaryJob(): Promise<void> {
       topMover,
       worstMover,
       aiSummary: eodResult.summary,
+      aiCostUsd: Number(getDetailedTokenUsage().costUsd.toFixed(4)),
+      aiCalls: getDetailedTokenUsage().calls,
       createdAt: new Date(),
     };
 

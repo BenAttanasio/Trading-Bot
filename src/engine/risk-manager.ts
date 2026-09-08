@@ -1,5 +1,6 @@
 import { TRADING_RULES } from '../config/trading-rules';
 import { HARD_LIMITS } from '../config/hard-limits';
+import { env } from '../config/env';
 import { getAccount } from '../services/alpaca/client';
 import { getPositions } from '../services/alpaca/trading';
 import {
@@ -7,6 +8,7 @@ import {
   getTradesForSymbol,
   getRecentDecisions,
 } from '../services/db/queries';
+import { TradeIntent } from '../services/db/models/trade';
 import { createServiceLogger } from '../utils/logger';
 import { minutesSince, hoursSince } from '../utils/time';
 
@@ -20,14 +22,27 @@ export interface RiskCheckResult {
 
 export interface TradeProposal {
   symbol: string;
+  /** Alpaca side. */
   action: 'BUY' | 'SELL';
   notional: number;
   sector?: string;
+  /** Defaults: BUY = open_long, SELL = close_long. */
+  intent?: TradeIntent;
+}
+
+export function intentFor(proposal: Pick<TradeProposal, 'action' | 'intent'>): TradeIntent {
+  return proposal.intent ?? (proposal.action === 'BUY' ? 'open_long' : 'close_long');
+}
+
+export function isOpeningIntent(intent: TradeIntent): boolean {
+  return intent === 'open_long' || intent === 'open_short';
 }
 
 export async function evaluateRisk(proposal: TradeProposal): Promise<RiskCheckResult> {
   const checks: Record<string, boolean> = {};
   const reasons: string[] = [];
+  const intent = intentFor(proposal);
+  const opening = isOpeningIntent(intent);
 
   try {
     // Fetch current state in parallel
@@ -41,25 +56,38 @@ export async function evaluateRisk(proposal: TradeProposal): Promise<RiskCheckRe
 
     const portfolioValue = parseFloat(account.portfolio_value);
     const lastEquity = parseFloat(account.last_equity);
-    const totalInvested = positions.reduce((sum, p) => sum + parseFloat(p.market_value), 0);
+    // Gross exposure: shorts count with their absolute value
+    const totalInvested = positions.reduce((sum, p) => sum + Math.abs(parseFloat(p.market_value)), 0);
 
-    // ─── Position-level checks ─────────────────────────
+    // ─── Intent-level checks ───────────────────────────
 
-    // 1. Position size within limit (only enforced on BUY — never block a SELL)
-    checks.positionSizeWithinLimit = proposal.action === 'SELL' || proposal.notional <= TRADING_RULES.maxPositionSizeDollars;
+    // 0. Shorts must be enabled in env AND on the account
+    if (intent === 'open_short') {
+      checks.shortsAllowed = env.ENABLE_SHORTS && account.shorting_enabled !== false;
+      if (!checks.shortsAllowed) {
+        reasons.push(env.ENABLE_SHORTS ? 'Account does not allow shorting' : 'Shorts disabled (ENABLE_SHORTS=0)');
+      }
+    } else {
+      checks.shortsAllowed = true;
+    }
+
+    // ─── Position-level checks (opening intents only — never block an exit on size) ─
+
+    // 1. Position size within limit
+    checks.positionSizeWithinLimit = !opening || proposal.notional <= TRADING_RULES.maxPositionSizeDollars;
     if (!checks.positionSizeWithinLimit) {
       reasons.push(`Position size $${proposal.notional} exceeds max $${TRADING_RULES.maxPositionSizeDollars}`);
     }
 
-    // 1b. Hard limit: no single buy may exceed a fixed % of account equity, whatever the rules say
+    // 1b. Hard limit: no single entry may exceed a fixed % of account equity, whatever the rules say
     const hardMaxPosition = portfolioValue * (HARD_LIMITS.maxPositionPercentOfEquity / 100);
-    checks.withinHardPositionLimit = proposal.action === 'SELL' || portfolioValue <= 0 || proposal.notional <= hardMaxPosition;
+    checks.withinHardPositionLimit = !opening || portfolioValue <= 0 || proposal.notional <= hardMaxPosition;
     if (!checks.withinHardPositionLimit) {
       reasons.push(`HARD LIMIT: $${proposal.notional} exceeds ${HARD_LIMITS.maxPositionPercentOfEquity}% of equity ($${hardMaxPosition.toFixed(2)})`);
     }
 
     // 2 & 3. Cooldown and revenge-trading checks
-    if (proposal.action === 'BUY') {
+    if (opening) {
       // 2. Not in cooldown
       const lastTradeForSymbol = recentTrades[0];
       if (lastTradeForSymbol) {
@@ -72,18 +100,19 @@ export async function evaluateRisk(proposal: TradeProposal): Promise<RiskCheckRe
         checks.notInCooldown = true;
       }
 
-      // 3. Not revenge trading (buying back after selling at a loss)
-      const lastSell = recentTrades.find((t) => t.action === 'SELL');
-      if (lastSell) {
-        const lastBuyBeforeSell = recentTrades.find(
-          (t) => t.action === 'BUY' && new Date(t.createdAt) < new Date(lastSell.createdAt)
+      // 3. Not revenge trading (re-entering after closing at a loss)
+      const lastClose = recentTrades.find((t) => (t.intent ? !isOpeningIntent(t.intent) : t.action === 'SELL'));
+      if (lastClose) {
+        const lastOpenBefore = recentTrades.find(
+          (t) => (t.intent ? isOpeningIntent(t.intent) : t.action === 'BUY') && new Date(t.createdAt) < new Date(lastClose.createdAt)
         );
-        const wasLoss = lastBuyBeforeSell && lastSell.price < lastBuyBeforeSell.price;
+        const closeSide = lastClose.intent === 'close_short' ? 'short' : 'long';
+        const wasLoss = lastOpenBefore && (closeSide === 'long' ? lastClose.price < lastOpenBefore.price : lastClose.price > lastOpenBefore.price);
         if (wasLoss) {
-          const hoursSinceLoss = hoursSince(new Date(lastSell.createdAt));
+          const hoursSinceLoss = hoursSince(new Date(lastClose.createdAt));
           checks.notRevengeTrading = hoursSinceLoss >= TRADING_RULES.revengeTradeCooldownHours;
           if (!checks.notRevengeTrading) {
-            reasons.push(`Revenge trade cooldown: sold ${proposal.symbol} at loss ${hoursSinceLoss}h ago, need ${TRADING_RULES.revengeTradeCooldownHours}h`);
+            reasons.push(`Revenge trade cooldown: closed ${proposal.symbol} at loss ${hoursSinceLoss}h ago, need ${TRADING_RULES.revengeTradeCooldownHours}h`);
           }
         } else {
           checks.notRevengeTrading = true;
@@ -92,26 +121,24 @@ export async function evaluateRisk(proposal: TradeProposal): Promise<RiskCheckRe
         checks.notRevengeTrading = true;
       }
     } else {
-      // SELL: block if we already sold this symbol recently (prevents duplicate sell on job overlap)
-      const lastSellForSymbol = recentTrades.find((t) => t.action === 'SELL');
-      if (lastSellForSymbol) {
-        const minutesSinceLastSell = minutesSince(new Date(lastSellForSymbol.createdAt));
-        checks.notInCooldown = minutesSinceLastSell >= TRADING_RULES.sellCooldownMinutes;
+      // Closing: block if we already closed this symbol recently (prevents duplicate exits on job overlap)
+      const lastCloseForSymbol = recentTrades.find((t) => (t.intent ? !isOpeningIntent(t.intent) : t.action === 'SELL'));
+      if (lastCloseForSymbol) {
+        const minutesSinceLastClose = minutesSince(new Date(lastCloseForSymbol.createdAt));
+        checks.notInCooldown = minutesSinceLastClose >= TRADING_RULES.sellCooldownMinutes;
         if (!checks.notInCooldown) {
-          reasons.push(`Sell cooldown active: already sold ${proposal.symbol} ${minutesSinceLastSell}m ago (cooldown: ${TRADING_RULES.sellCooldownMinutes}m)`);
+          reasons.push(`Sell cooldown active: already closed ${proposal.symbol} ${minutesSinceLastClose}m ago (cooldown: ${TRADING_RULES.sellCooldownMinutes}m)`);
         }
       } else {
         checks.notInCooldown = true;
       }
-      checks.notRevengeTrading = true; // revenge-trading check only applies to BUY
+      checks.notRevengeTrading = true; // revenge-trading check only applies to entries
     }
 
     // ─── Portfolio-level checks ────────────────────────
 
-    // 4. Total exposure within limit
-    const proposedExposure = proposal.action === 'BUY'
-      ? totalInvested + proposal.notional
-      : totalInvested;
+    // 4. Total (gross) exposure within limit
+    const proposedExposure = opening ? totalInvested + proposal.notional : totalInvested;
     checks.totalExposureWithinLimit = proposedExposure <= TRADING_RULES.maxPortfolioExposure;
     if (!checks.totalExposureWithinLimit) {
       reasons.push(`Portfolio exposure $${proposedExposure.toFixed(2)} would exceed max $${TRADING_RULES.maxPortfolioExposure}`);
@@ -137,17 +164,25 @@ export async function evaluateRisk(proposal: TradeProposal): Promise<RiskCheckRe
     // ─── Diversification checks ────────────────────────
 
     // 7. Single stock concentration
-    if (proposal.action === 'BUY') {
+    if (opening) {
       const existingPosition = positions.find((p) => p.symbol === proposal.symbol);
-      const existingValue = existingPosition ? parseFloat(existingPosition.market_value) : 0;
+      const existingValue = existingPosition ? Math.abs(parseFloat(existingPosition.market_value)) : 0;
       const newValue = existingValue + proposal.notional;
       const concentrationPercent = portfolioValue > 0 ? (newValue / portfolioValue) * 100 : 0;
       checks.singleStockConcentration = concentrationPercent <= TRADING_RULES.maxSingleStockPercent;
       if (!checks.singleStockConcentration) {
         reasons.push(`${proposal.symbol} would be ${concentrationPercent.toFixed(1)}% of portfolio (max ${TRADING_RULES.maxSingleStockPercent}%)`);
       }
+      // 7b. Never open a short against a long or vice versa
+      const existingSide = existingPosition ? (existingPosition.side === 'short' ? 'short' : 'long') : null;
+      const wantSide = intent === 'open_short' ? 'short' : 'long';
+      checks.noOpposingPosition = existingSide === null || existingSide === wantSide;
+      if (!checks.noOpposingPosition) {
+        reasons.push(`Already ${existingSide} ${proposal.symbol}; close it before opening a ${wantSide}`);
+      }
     } else {
       checks.singleStockConcentration = true;
+      checks.noOpposingPosition = true;
     }
 
     // 8. Sector concentration (simplified — uses tags from proposal)
@@ -155,8 +190,8 @@ export async function evaluateRisk(proposal: TradeProposal): Promise<RiskCheckRe
 
     // ─── Anti-loop checks ──────────────────────────────
 
-    // 9. Not oscillating (buy→sell→buy pattern)
-    if (proposal.action === 'BUY') {
+    // 9. Not oscillating (open→close→open pattern)
+    if (opening) {
       const oscillations = recentTrades.reduce((count, trade, i) => {
         if (i > 0 && trade.action !== recentTrades[i - 1].action) return count + 1;
         return count;
@@ -171,10 +206,10 @@ export async function evaluateRisk(proposal: TradeProposal): Promise<RiskCheckRe
 
     // 10. Decision different from last (AI not flip-flopping)
     const lastDecision = recentDecisions[0];
-    if (lastDecision && proposal.action === 'BUY') {
-      const lastWasSell = lastDecision.decision === 'SELL' || lastDecision.decision === 'EXIT';
+    if (lastDecision && opening) {
+      const lastWasClose = lastDecision.decision === 'SELL' || lastDecision.decision === 'EXIT';
       const minutesSinceDecision = minutesSince(new Date(lastDecision.createdAt));
-      checks.decisionDifferentFromLast = !(lastWasSell && minutesSinceDecision < 60);
+      checks.decisionDifferentFromLast = !(lastWasClose && minutesSinceDecision < 60);
       if (!checks.decisionDifferentFromLast) {
         reasons.push(`AI flip-flop: decided to ${lastDecision.decision} ${proposal.symbol} ${minutesSinceDecision}m ago`);
       }
@@ -194,12 +229,12 @@ export async function evaluateRisk(proposal: TradeProposal): Promise<RiskCheckRe
   const blockedReason = reasons.length > 0 ? reasons.join('; ') : null;
 
   if (!allPassed) {
-    log.warn(`Trade BLOCKED: ${proposal.action} ${proposal.symbol} $${proposal.notional}`, {
+    log.warn(`Trade BLOCKED: ${intent} ${proposal.symbol} $${proposal.notional}`, {
       reasons,
       checks,
     });
   } else {
-    log.info(`Trade APPROVED: ${proposal.action} ${proposal.symbol} $${proposal.notional}`);
+    log.info(`Trade APPROVED: ${intent} ${proposal.symbol} $${proposal.notional}`);
   }
 
   return { allPassed, details: checks, blockedReason };
