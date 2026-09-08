@@ -18,6 +18,7 @@ import { getAccount } from '../services/alpaca/client';
 import { createServiceLogger } from '../utils/logger';
 import { formatCurrency } from '../utils/formatters';
 import { getPlaybookBlock } from '../services/playbook';
+import { buildInitialDeploymentNote } from '../services/ai/prompts/shared';
 import { recordPrediction } from './predictions';
 
 const log = createServiceLogger('Scout');
@@ -46,6 +47,9 @@ export async function runMorningResearch(): Promise<void> {
   }
   const initialDeployment = investedPct < env.INITIAL_DEPLOYMENT_BELOW_PERCENT;
   const convictionBar = initialDeployment ? 5 : 6;
+  const context: string[] = initialDeployment
+    ? [buildInitialDeploymentNote(investedPct, env.MORNING_MAX_BUYS, TRADING_RULES.maxPositionSizeDollars)]
+    : [];
   if (initialDeployment) {
     log.info(`Initial deployment mode: ${investedPct.toFixed(1)}% invested — conviction bar ${convictionBar}, up to ${env.MORNING_MAX_BUYS} buys of ≤ ${formatCurrency(TRADING_RULES.maxPositionSizeDollars)}`);
   }
@@ -54,7 +58,7 @@ export async function runMorningResearch(): Promise<void> {
 
   for (const item of watchlist) {
     try {
-      const research = await researchSymbol(item.symbol, item.sector);
+      const research = await researchSymbol(item.symbol, item.sector, false, context);
       if (research && research.recommendation === 'BUY' && research.conviction >= convictionBar) {
         opportunities.push(research);
       }
@@ -69,7 +73,7 @@ export async function runMorningResearch(): Promise<void> {
 
   for (const opp of opportunities.slice(0, env.MORNING_MAX_BUYS)) {
     try {
-      await evaluateAndExecute(opp);
+      await evaluateAndExecute(opp, 'morning_research', context);
     } catch (error) {
       log.error(`Failed to evaluate/execute opportunity: ${opp.symbol}`, { error });
     }
@@ -78,7 +82,7 @@ export async function runMorningResearch(): Promise<void> {
   log.info('Morning research cycle complete');
 }
 
-async function researchSymbol(symbol: string, sector: string, budgetMode = false): Promise<MorningResearchResult | null> {
+async function researchSymbol(symbol: string, sector: string, budgetMode = false, context: string[] = []): Promise<MorningResearchResult | null> {
   log.info(`Researching ${symbol}...`);
 
   // Gather all available market data — never fails, just reports what's missing
@@ -110,6 +114,7 @@ async function researchSymbol(symbol: string, sector: string, budgetMode = false
     schema: MorningResearchSchema,
     systemPrompt: getMorningResearchSystemPrompt(),
     cachedBlocks: [getPlaybookBlock()],
+    contextBlocks: context,
     userPrompt: buildMorningResearchPrompt({
       symbol,
       sector,
@@ -164,7 +169,7 @@ async function researchSymbol(symbol: string, sector: string, budgetMode = false
   return research;
 }
 
-async function evaluateAndExecute(research: MorningResearchResult, trigger: 'morning_research' | 'sentinel' | 'manual' = 'morning_research'): Promise<void> {
+async function evaluateAndExecute(research: MorningResearchResult, trigger: 'morning_research' | 'sentinel' | 'manual' = 'morning_research', context: string[] = []): Promise<void> {
   const symbol = research.symbol;
   log.info(`Evaluating trade for ${symbol} (conviction: ${research.conviction})`);
 
@@ -188,6 +193,7 @@ async function evaluateAndExecute(research: MorningResearchResult, trigger: 'mor
     schema: NewTradeDecisionSchema,
     systemPrompt: getTradeDecisionSystemPrompt(),
     cachedBlocks: [getPlaybookBlock()],
+    contextBlocks: context,
     userPrompt: buildNewTradeDecisionPrompt({
       symbol,
       sector: '',

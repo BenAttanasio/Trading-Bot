@@ -14,6 +14,8 @@ export interface ExecutionRequest {
   symbol: string;
   action: 'BUY' | 'SELL';
   notional: number;
+  /** Exact share quantity (SELL exits/trims): avoids notional rounding past the shares actually held. */
+  qty?: number;
   trigger: TradeTrigger;
   aiReasoning: string;
   aiConviction: number;
@@ -121,7 +123,8 @@ export async function executeTrade(request: ExecutionRequest): Promise<Execution
     const order = await submitOrder({
       symbol: request.symbol,
       side: request.action.toLowerCase() as 'buy' | 'sell',
-      notional: request.notional,
+      notional: request.qty ? undefined : request.notional,
+      qty: request.qty,
       // During extended hours, use limit order with current price
       extended_hours: !regularHours && currentPrice > 0,
       limit_price: !regularHours && currentPrice > 0 ? currentPrice : undefined,

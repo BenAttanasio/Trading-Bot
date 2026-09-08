@@ -66,6 +66,13 @@ export async function getBars(
     timeframe,
     limit: limit.toString(),
   };
+  // Alpaca defaults `start` to the beginning of the current day, which returns a
+  // single bar and silently disables every indicator. Reach back far enough
+  // (calendar days ≈ 1.6× trading days, plus a buffer) to actually fill `limit`.
+  if (!start && timeframe.endsWith('Day')) {
+    const days = Math.ceil(limit * 1.6) + 7;
+    start = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
   if (start) params.start = start;
   if (end) params.end = end;
 

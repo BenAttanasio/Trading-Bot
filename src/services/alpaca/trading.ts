@@ -85,11 +85,12 @@ export async function submitOrder(params: OrderParams): Promise<AlpacaOrder> {
       computedQty: body.qty,
     });
   } else {
-    // Regular hours: use notional (dollar-based, fractional shares)
-    if (params.notional) {
-      body.notional = params.notional.toFixed(2);
-    } else if (params.qty) {
+    // Regular hours: an explicit qty wins (exact exits of fractional positions);
+    // otherwise notional (dollar-based, fractional shares)
+    if (params.qty) {
       body.qty = params.qty.toString();
+    } else if (params.notional) {
+      body.notional = params.notional.toFixed(2);
     } else {
       throw new Error('Either notional or qty must be provided');
     }
