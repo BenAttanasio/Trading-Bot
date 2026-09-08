@@ -13,6 +13,8 @@ import { getActiveWatchlist, getPosition, insertResearch, getAllPositions } from
 import { Research } from '../services/db/models/research';
 import { executeTrade } from './execution';
 import { TRADING_RULES } from '../config/trading-rules';
+import { env } from '../config/env';
+import { getAccount } from '../services/alpaca/client';
 import { createServiceLogger } from '../utils/logger';
 import { formatCurrency } from '../utils/formatters';
 import { getPlaybookBlock } from '../services/playbook';
@@ -31,12 +33,29 @@ export async function runMorningResearch(): Promise<void> {
 
   log.info(`Researching ${watchlist.length} stocks on watchlist`);
 
+  // Initial-deployment mode: when the book is (almost) all cash, lower the conviction
+  // bar a notch so the first session actually puts capital to work instead of nibbling.
+  let investedPct = 0;
+  try {
+    const [account, positions] = await Promise.all([getAccount(), getAllPositions()]);
+    const equity = parseFloat(account.portfolio_value);
+    const invested = positions.reduce((s, p) => s + p.currentPrice * p.quantity, 0);
+    investedPct = equity > 0 ? (invested / equity) * 100 : 0;
+  } catch (error) {
+    log.warn('Could not compute invested %, assuming normal mode', { error });
+  }
+  const initialDeployment = investedPct < env.INITIAL_DEPLOYMENT_BELOW_PERCENT;
+  const convictionBar = initialDeployment ? 5 : 6;
+  if (initialDeployment) {
+    log.info(`Initial deployment mode: ${investedPct.toFixed(1)}% invested — conviction bar ${convictionBar}, up to ${env.MORNING_MAX_BUYS} buys of ≤ ${formatCurrency(TRADING_RULES.maxPositionSizeDollars)}`);
+  }
+
   const opportunities: MorningResearchResult[] = [];
 
   for (const item of watchlist) {
     try {
       const research = await researchSymbol(item.symbol, item.sector);
-      if (research && research.recommendation === 'BUY' && research.conviction >= 6) {
+      if (research && research.recommendation === 'BUY' && research.conviction >= convictionBar) {
         opportunities.push(research);
       }
     } catch (error) {
@@ -46,9 +65,9 @@ export async function runMorningResearch(): Promise<void> {
 
   // Sort by conviction, process top opportunities
   opportunities.sort((a, b) => b.conviction - a.conviction);
-  log.info(`Found ${opportunities.length} buy opportunities`);
+  log.info(`Found ${opportunities.length} buy opportunities (taking up to ${env.MORNING_MAX_BUYS})`);
 
-  for (const opp of opportunities.slice(0, 3)) {
+  for (const opp of opportunities.slice(0, env.MORNING_MAX_BUYS)) {
     try {
       await evaluateAndExecute(opp);
     } catch (error) {

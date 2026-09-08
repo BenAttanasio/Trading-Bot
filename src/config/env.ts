@@ -60,6 +60,10 @@ export const env = {
   COOLDOWN_MINUTES: parseInt(optionalEnv('COOLDOWN_MINUTES', '120'), 10),
   REVENGE_TRADE_COOLDOWN_HOURS: parseInt(optionalEnv('REVENGE_TRADE_COOLDOWN_HOURS', '24'), 10),
   MAX_HOLD_DAYS_BEFORE_REVIEW: parseInt(optionalEnv('MAX_HOLD_DAYS_BEFORE_REVIEW', '30'), 10),
+  /** How many top-conviction buys the morning cycle may place. */
+  MORNING_MAX_BUYS: parseInt(optionalEnv('MORNING_MAX_BUYS', '8'), 10),
+  /** Below this % of equity invested, the morning cycle runs in "initial deployment" mode (conviction bar 5 instead of 6). */
+  INITIAL_DEPLOYMENT_BELOW_PERCENT: parseFloat(optionalEnv('INITIAL_DEPLOYMENT_BELOW_PERCENT', '10')),
   SENTINEL_POLL_INTERVAL_SECONDS: parseInt(optionalEnv('SENTINEL_POLL_INTERVAL_SECONDS', '60'), 10),
   INTRADAY_PULSE_INTERVAL_MINUTES: parseInt(optionalEnv('INTRADAY_PULSE_INTERVAL_MINUTES', '30'), 10),
   DAILY_AI_TOKEN_BUDGET: parseInt(optionalEnv('DAILY_AI_TOKEN_BUDGET', '2000000'), 10),
