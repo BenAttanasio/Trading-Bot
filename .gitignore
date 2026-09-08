@@ -1,6 +1,8 @@
 node_modules/
+node_modules
 dist/
 dashboard/node_modules/
+dashboard/node_modules
 dashboard/dist/
 
 # Environment / secrets
@@ -32,3 +34,6 @@ Thumbs.db
 .deploy-stage/
 .deploy-stage.tar.gz
 .deploy-*
+
+# Self-improve worktrees (Pi)
+.worktrees/

@@ -229,16 +229,23 @@ export async function runSelfImprove(): Promise<void> {
     }
     await updateChangeRequest(cr._id!, {}, `Agent finished (exit ${agent.code}${costUsd != null ? `, $${costUsd.toFixed(2)}` : ''}): ${agentSummary || tail(agent.stderr, 600)}`);
 
-    // Make sure the work is committed, then diff against base
-    const dirty = (await sh('git', ['status', '--porcelain'], worktree)).stdout.trim();
-    if (dirty) {
-      await sh('git', ['add', '-A'], worktree);
+    // Make sure the work is committed (never the shared node_modules links), then diff against base
+    const isDepLink = (f: string) => /(^|\/)node_modules(\/|$)/.test(f);
+    const dirty = (await sh('git', ['status', '--porcelain', '--', '.', ':!node_modules', ':!dashboard/node_modules'], worktree)).stdout
+      .split('\n')
+      .filter((l) => l.trim() && !isDepLink(l.slice(3)));
+    if (agent.code !== 0 && dirty.length === 0) {
+      await fail(cr, `Agent failed: ${agentSummary || tail(agent.stderr, 400) || `exit ${agent.code}`}`);
+      return;
+    }
+    if (dirty.length) {
+      await sh('git', ['add', '-A', '--', '.', ':!node_modules', ':!dashboard/node_modules'], worktree);
       await sh('git', ['commit', '-q', '-m', `auto: ${cr.title}`, '-m', `Change request ${cr._id} (auto-committed by pipeline)`], worktree);
     }
     const files = (await sh('git', ['diff', '--name-only', `${base}...HEAD`], worktree)).stdout
       .split('\n')
       .map((s) => s.trim())
-      .filter(Boolean);
+      .filter((f) => f && !isDepLink(f));
     if (files.length === 0) {
       await fail(cr, 'Agent produced no changes', agentSummary || agent.stderr);
       return;
