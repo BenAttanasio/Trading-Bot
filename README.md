@@ -16,10 +16,10 @@ It ships with a dashboard and a compact `/api/summary` other dashboards can read
 | **Sentinel** | every 60 s during extended hours | Triages news and price spikes; urgency ≥ 7 escalates to immediate research, 4–6 is queued for the pulse |
 | **EOD summary + benchmark** | 16:05 Mon–Fri | Daily summary; records equity next to SPY's close |
 | **Nightly reflection** | 19:00 Mon–Fri | Scores due predictions, judges closed trades (thesis right / wrong / right for the wrong reason / timing), appends lessons to the playbook |
-| **Weekly deep review** | Sunday 10:00 | Sonnet 5 (deep tier) with web search rewrites the playbook. Parameter changes and code change requests are applied only once `MIN_SCORED_FOR_TUNING` predictions have been scored — before that they are recorded as proposals |
+| **Weekly deep review** | Sunday 10:00 | Sonnet 5 (deep tier) with web search rewrites the playbook. Parameter changes and code change requests are applied only once `MIN_SCORED_FOR_TUNING` predictions have been scored, and before that they are recorded as proposals |
 | **Self-improve** | Sunday 11:30 + weekday evenings | Implements change requests with Claude Code in a git worktree, verifies, auto-merges/deploys or waits for approval |
 
-Every decision, including HOLD and PASS, is logged with the AI's reasoning, conviction, and a market snapshot. Every BUY and PASS also records a prediction (direction, expected move, horizon, invalidation, confidence) that is scored later, so the bot's calibration is measured, not assumed.
+Every decision, including HOLD and PASS, is logged with the AI's reasoning, conviction, and a market snapshot. Every BUY and PASS also records a prediction (direction, expected move, horizon, invalidation, confidence) that is scored later, so the bot's calibration gets measured.
 
 ### Models and cost
 
@@ -86,7 +86,7 @@ Admin routes accept requests from the box itself or a private LAN address; from 
 
 ## Deploying to the Raspberry Pi
 
-The bot runs as a **systemd user unit** (`trading-bot`) on port 3001 and serves its own dashboard, so there is one process and one bookmark: `http://raspberrypi.local:3001`.
+The bot runs as a **systemd user unit** (`trading-bot`) on port 3001 and serves its own dashboard, so there's one process and one bookmark: `http://raspberrypi.local:3001`.
 
 Layout on the Pi:
 
@@ -121,7 +121,7 @@ MongoDB runs on the Pi in Docker (`mongo:7`, bound to the LAN with auth). Any Mo
 
 ### Self-improvement prerequisites on the Pi
 
-`git`, `gh` (optional — for pushing branches and opening PRs), and `@anthropic-ai/claude-code` installed globally; a checkout at `SELF_IMPROVE_REPO_DIR`; `ANTHROPIC_API_KEY` in `shared/.env`. Set `SELF_IMPROVE_BASE_BRANCH` to the branch the bot should build on.
+`git`, `gh` (optional, for pushing branches and opening PRs), and `@anthropic-ai/claude-code` installed globally; a checkout at `SELF_IMPROVE_REPO_DIR`; `ANTHROPIC_API_KEY` in `shared/.env`. Set `SELF_IMPROVE_BASE_BRANCH` to the branch the bot should build on.
 
 ## Unified Dashboard integration
 
@@ -133,4 +133,6 @@ See `.env.example` for every variable. The env values are defaults; the playbook
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
+
+More at [benattanasio.com/lab](https://benattanasio.com/lab).
